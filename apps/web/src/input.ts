@@ -56,9 +56,10 @@ function livePads(): [PadLike | null, PadLike | null] {
 const SUPER_KEYS = ["KeyF", "Semicolon"] as const;
 
 export function readSupers(): [boolean, boolean] {
-  if (!document.hasFocus() || typing(document.activeElement)) return [false, false];
+  if (!document.hasFocus()) return [false, false];
   const [first, second] = livePads();
-  return [down.has(SUPER_KEYS[0]) || superPressed(first), down.has(SUPER_KEYS[1]) || superPressed(second)];
+  const keys = typing(document.activeElement);
+  return [(keys ? false : down.has(SUPER_KEYS[0])) || superPressed(first), (keys ? false : down.has(SUPER_KEYS[1])) || superPressed(second)];
 }
 
 export function readPads(): [number, number] {

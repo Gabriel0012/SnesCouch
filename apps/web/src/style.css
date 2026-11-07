@@ -195,6 +195,27 @@ header .lede { color: #6e7585; margin: 0; }
 }
 #picture[hidden] { display: none; }
 #bubbles { position: absolute; inset: 0; pointer-events: none; }
+#confirm {
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  top: 50%;
+  width: min(18rem, 92%);
+  padding: 0.75rem;
+  background: var(--ink);
+  color: #f6f3ea;
+  font-size: 13px;
+  line-height: 1.35;
+  transform: translate(-50%, -50%);
+  box-shadow: inset 0 0 0 3px var(--b), 4px 4px 0 #000;
+}
+#confirm[hidden] { display: none; }
+#confirm p { margin: 0 0 0.7rem; overflow-wrap: anywhere; line-height: 1.35; }
+#confirm-no {
+  background: var(--well);
+  color: var(--body);
+  box-shadow: inset -3px -3px 0 #111, inset 3px 3px 0 #4a4f5a, 3px 3px 0 #000;
+}
 .bubble {
   position: absolute;
   z-index: 2;

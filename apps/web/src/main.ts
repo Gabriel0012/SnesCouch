@@ -23,6 +23,10 @@ const chatForm = document.querySelector<HTMLFormElement>("#chat")!;
 const chatInput = document.querySelector<HTMLInputElement>("#chat-text")!;
 const chatButton = chatForm.querySelector("button")!;
 const leaveButton = document.querySelector<HTMLButtonElement>("#leave")!;
+const confirmBox = document.querySelector<HTMLElement>("#confirm")!;
+const confirmText = document.querySelector<HTMLElement>("#confirm-text")!;
+const confirmYes = document.querySelector<HTMLButtonElement>("#confirm-yes")!;
+const confirmNo = document.querySelector<HTMLButtonElement>("#confirm-no")!;
 const picture = document.querySelector<HTMLElement>("#picture")!;
 const bubbles = [
   document.querySelector<HTMLElement>('.bubble[data-slot="0"]')!,
@@ -307,6 +311,11 @@ const facing: [number, number] = [RIGHT, RIGHT];
 const superDown = [false, false];
 let typingIdle = 0;
 let typingSent = false;
+type SaveDialog =
+  | { kind: "offer"; state: Uint8Array; label: string }
+  | { kind: "wait"; id: number; state: Uint8Array }
+  | { kind: "incoming"; id: number; state: Uint8Array };
+let saveDialog: SaveDialog | null = null;
 
 function mix(from: { x: number; y: number }, to: { x: number; y: number }) {
   return { x: from.x + (to.x - from.x) * 0.35, y: from.y + (to.y - from.y) * 0.35 };
@@ -450,7 +459,7 @@ async function renderSaves() {
     load.type = "button";
     load.textContent = savedAt ? `Carregar ${when(savedAt)}` : "Vazio";
     load.disabled = !savedAt;
-    load.addEventListener("click", () => void readSlot(game, slot));
+    load.addEventListener("click", () => void readSlot(game, slot, savedAt ?? 0));
     saves.append(load);
   }
 }
@@ -467,15 +476,33 @@ async function writeSlot(game: Game, slot: number) {
   }
 }
 
-async function readSlot(game: Game, slot: number) {
-  if (!worker || session) {
-    setBanner("O save local abre fora da sala.");
-    return;
-  }
+function showConfirm(text: string, mode: "both" | "cancel") {
+  confirmText.textContent = text;
+  confirmYes.hidden = mode === "cancel";
+  confirmBox.hidden = false;
+}
+
+function hideConfirm() {
+  confirmBox.hidden = true;
+  saveDialog = null;
+}
+
+async function readSlot(game: Game, slot: number, savedAt: number) {
+  if (!worker || loadedGame?.id !== game.id) return;
   const state = await loadState(game.id, slot);
   if (!state) return;
-  const copy = state.slice();
-  worker.postMessage({ t: "restore", state: copy.buffer }, [copy.buffer]);
+  if (!session) {
+    const copy = state.slice();
+    worker.postMessage({ t: "restore", state: copy.buffer }, [copy.buffer]);
+    return;
+  }
+  if (!session.linked()) {
+    setBanner("O outro jogador ainda não entrou na partida.");
+    return;
+  }
+  if (saveDialog) return;
+  saveDialog = { kind: "offer", state, label: when(savedAt) };
+  showConfirm(`Carregar o save de ${when(savedAt)} nos dois?`, "both");
 }
 
 async function connect(role: Role, code: string) {
@@ -544,6 +571,7 @@ async function connect(role: Role, code: string) {
       setChatEnabled(false);
       leaveButton.hidden = true;
       typingSent = false;
+      hideConfirm();
       hideBubble(0);
       hideBubble(1);
       renderPeople();
@@ -563,6 +591,32 @@ async function connect(role: Role, code: string) {
     onRoster: (next) => {
       roster = next;
       renderPeople();
+    },
+    onSaveOffer: (offer) => {
+      if (session !== mine || saveDialog) {
+        mine.answerSave(offer.id, false);
+        return;
+      }
+      saveDialog = { kind: "incoming", id: offer.id, state: offer.state };
+      showConfirm(`${offer.name} quer carregar o save de ${offer.label} nos dois.`, "both");
+    },
+    onSaveAnswer: (id, yes) => {
+      if (session !== mine || !saveDialog || saveDialog.id !== id) return;
+      if (saveDialog.kind === "incoming") {
+        if (yes) return;
+        hideConfirm();
+        setBanner("O outro jogador cancelou o save.");
+        return;
+      }
+      if (saveDialog.kind !== "wait") return;
+      const state = saveDialog.state;
+      hideConfirm();
+      if (!yes) {
+        setBanner("O outro jogador recusou o save.");
+        return;
+      }
+      mine.acceptSave(state);
+      setBanner("Save carregado nos dois.");
     },
     checkpoint: askCheckpoint,
   });
@@ -730,6 +784,7 @@ function leaveRoom() {
   setChatEnabled(false);
   leaveButton.hidden = true;
   typingSent = false;
+  hideConfirm();
   clearChat();
   hideBubble(0);
   hideBubble(1);
@@ -741,6 +796,34 @@ function leaveRoom() {
 }
 
 leaveButton.addEventListener("click", () => leaveRoom());
+
+confirmYes.addEventListener("click", () => {
+  if (!saveDialog) return;
+  if (saveDialog.kind === "offer") {
+    if (!session?.linked()) {
+      hideConfirm();
+      setBanner("O outro jogador ainda não entrou na partida.");
+      return;
+    }
+    const id = session.proposeSave(saveDialog.label, saveDialog.state);
+    saveDialog = { kind: "wait", id, state: saveDialog.state };
+    showConfirm("Esperando o outro jogador confirmar o save.", "cancel");
+    return;
+  }
+  if (saveDialog.kind === "incoming") {
+    const state = saveDialog.state;
+    session?.answerSave(saveDialog.id, true);
+    session?.acceptSave(state);
+    hideConfirm();
+    setBanner("Save carregado nos dois.");
+  }
+});
+
+confirmNo.addEventListener("click", () => {
+  if (saveDialog?.kind === "wait") session?.answerSave(saveDialog.id, false);
+  if (saveDialog?.kind === "incoming") session?.answerSave(saveDialog.id, false);
+  hideConfirm();
+});
 
 chatInput.addEventListener("keydown", (event) => {
   if (event.code !== "Enter" || event.repeat || event.shiftKey) return;

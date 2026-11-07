@@ -394,6 +394,7 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
     return;
   }
   if (message.t === "net-resume") {
+    clearMacros();
     const state = new Uint8Array(message.state);
     if (!loadState(state)) {
       post({ t: "error", message: "Não deu para retomar a partida." });
@@ -401,6 +402,7 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
     }
     checkpoint = state;
     checkpointFrame = message.frame;
+    pendingRemote.length = 0;
     beginNet(message.slot === 1 ? 1 : 0, message.delay, message.frame);
   }
 };

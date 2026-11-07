@@ -48,7 +48,7 @@ export class Lockstep {
   }
 
   pushRemote(frame: number, buttons: number) {
-    if (frame < this.simFrame) return;
+    if (frame < this.simFrame || frame > this.simFrame + this.delay + 8) return;
     this.remote.set(frame, buttons & 0xffff);
   }
 

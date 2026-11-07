@@ -111,6 +111,24 @@ test("iBuffalo clássico segue o próprio mapa", () => {
   assert.equal(snesBits(buffalo), A | R | START | UP);
 });
 
+test("o gatilho analógico do PS4 no eixo também é o super", () => {
+  const axis4 = pad({
+    id: "Wireless Controller (Vendor: 054c Product: 09cc)",
+    buttons: hold([]),
+    axes: [0, 0, 0, 0, 0.8],
+  });
+  const axis5 = pad({
+    id: "Wireless Controller (Vendor: 054c Product: 09cc)",
+    mapping: "standard",
+    buttons: hold([]),
+    axes: [0, 0, 0, 0, 0, 0.8],
+  });
+  assert.equal(superPressed(axis4), true);
+  assert.equal(snesBits(axis4) & R, 0);
+  assert.equal(superPressed(axis5), true);
+  assert.equal(snesBits(axis5) & R, 0);
+});
+
 test("R2 dispara o super e não segura o R do Super Nintendo", () => {
   const xbox = pad({
     id: "Xbox Series Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b12)",

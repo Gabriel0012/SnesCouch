@@ -14,6 +14,7 @@ export interface StateChunk {
 
 const INPUT = 1;
 const STATE = 2;
+const SAVE = 3;
 
 export function encodeInputs(frames: InputFrame[]): ArrayBuffer {
   const buf = new ArrayBuffer(2 + frames.length * 6);
@@ -43,6 +44,20 @@ export function decodeInputs(buf: ArrayBuffer): InputFrame[] | null {
     });
   }
   return frames;
+}
+
+export function encodeSaveChunks(id: number, hash: number, bytes: Uint8Array, chunkSize = 12000): ArrayBuffer[] {
+  return encodeStateChunks(id, 0, hash, bytes, chunkSize).map((part) => {
+    new Uint8Array(part)[0] = SAVE;
+    return part;
+  });
+}
+
+export function decodeSaveChunk(buf: ArrayBuffer): StateChunk | null {
+  if (buf.byteLength < 19 || new DataView(buf).getUint8(0) !== SAVE) return null;
+  const copy = buf.slice(0);
+  new DataView(copy).setUint8(0, STATE);
+  return decodeStateChunk(copy);
 }
 
 export function encodeStateChunks(frame: number, delay: number, hash: number, bytes: Uint8Array, chunkSize = 12000): ArrayBuffer[] {

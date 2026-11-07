@@ -179,16 +179,23 @@ export function snesBits(pad: PadLike | null): number {
   }
 }
 
+function analogDown(pad: PadLike, index: number): boolean {
+  const button = pad.buttons[index];
+  return !!button && (button.pressed || (button.value ?? 0) > 0.2);
+}
+
+function axisDown(pad: PadLike, index: number): boolean {
+  const axis = pad.axes[index];
+  return axis !== undefined && axis > 0.2;
+}
+
 /** R2 is the Final Fight super, so it stays off the SNES R button. */
 export function superPressed(pad: PadLike | null): boolean {
   if (!pad) return false;
   const kind = layoutOf(pad);
-  if (kind === "ps") return trigger(pad.axes[4]) || pressed(pad, 7);
-  if (kind === "standard") {
-    const triggerButton = pad.buttons[7];
-    return !!triggerButton && (triggerButton.pressed || (triggerButton.value ?? 0) > 0.55);
-  }
-  return false;
+  if (kind === "dragon" || kind === "buffalo" || kind === "snes") return false;
+  if (analogDown(pad, 7)) return true;
+  return axisDown(pad, 4) || axisDown(pad, 5);
 }
 
 export function padLabel(pad: PadLike): string {

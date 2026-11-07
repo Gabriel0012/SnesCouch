@@ -1,8 +1,10 @@
 import {
   StateAssembler,
   decodeInputs,
+  decodeSaveChunk,
   decodeStateChunk,
   encodeInputs,
+  encodeSaveChunks,
   encodeStateChunks,
   type InputFrame,
 } from "../../../packages/net/codec.ts";
@@ -51,6 +53,8 @@ interface SessionOptions {
   onChatLog: (lines: ChatLine[]) => void;
   onTyping: (from: Role, on: boolean) => void;
   onRoster: (roster: { host: Seat; guest: Seat }) => void;
+  onSaveOffer: (offer: { id: number; name: string; label: string; state: Uint8Array }) => void;
+  onSaveAnswer: (id: number, yes: boolean) => void;
   checkpoint: () => Promise<Snapshot>;
 }
 
@@ -83,6 +87,9 @@ export class OnlineSession {
   private resumed = false;
   private pingAt = 0;
   private epoch = 0;
+  private saveSeq = 0;
+  private saveAssembler = new StateAssembler();
+  private saveMeta: { id: number; name: string; label: string } | null = null;
   private resetGen = 0;
   private control = "Teclado";
   private name = "";
@@ -124,6 +131,38 @@ export class OnlineSession {
 
   sendTyping(on: boolean) {
     this.socketSend({ t: "typing", on });
+  }
+
+  linked(): boolean {
+    return this.started && this.channel?.readyState === "open";
+  }
+
+  inputDelay(): number {
+    return Math.min(8, Math.max(2, this.delay || 2));
+  }
+
+  proposeSave(label: string, state: Uint8Array): number {
+    const id = ++this.saveSeq;
+    this.sendJson({ t: "save-ask", id, name: this.name, label });
+    if (this.channel?.readyState === "open") {
+      for (const chunk of encodeSaveChunks(id, fnv(state), state)) this.channel.send(chunk);
+    }
+    return id;
+  }
+
+  answerSave(id: number, yes: boolean) {
+    this.sendJson({ t: yes ? "save-yes" : "save-no", id });
+  }
+
+  acceptSave(state: Uint8Array) {
+    this.epoch += 1;
+    this.outgoing.clear();
+    this.resumed = true;
+    this.started = true;
+    this.awaitingSync = false;
+    const delay = this.inputDelay();
+    this.delay = delay;
+    this.opts.onResume({ frame: 0, state, delay });
   }
 
   requestReset() {
@@ -399,6 +438,9 @@ export class OnlineSession {
         hash?: number;
         n?: number;
         delay?: number;
+        id?: number;
+        name?: string;
+        label?: string;
       };
       if (message.t === "reset-ask" && this.opts.role === "host" && this.started) this.broadcastReset();
       if (message.t === "reset" && typeof message.n === "number" && message.n > this.resetGen) {
@@ -421,6 +463,13 @@ export class OnlineSession {
         this.close();
         return;
       }
+      if (message.t === "save-ask" && typeof message.id === "number") {
+        this.saveMeta = { id: message.id, name: message.name?.trim() || "O outro jogador", label: message.label?.trim() || "agora" };
+        this.saveAssembler = new StateAssembler();
+      }
+      if ((message.t === "save-yes" || message.t === "save-no") && typeof message.id === "number") {
+        this.opts.onSaveAnswer(message.id, message.t === "save-yes");
+      }
       if (message.t === "check" && typeof message.frame === "number" && typeof message.hash === "number") {
         this.opts.onCheck(message.frame, message.hash);
       }
@@ -433,6 +482,20 @@ export class OnlineSession {
       return;
     }
     if (!(data instanceof ArrayBuffer)) return;
+    const save = decodeSaveChunk(data);
+    if (save) {
+      const done = this.saveAssembler.push(save);
+      if (!done || !this.saveMeta || done.frame !== this.saveMeta.id) return;
+      if (fnv(done.bytes) !== done.hash) {
+        this.sendJson({ t: "save-no", id: done.frame });
+        this.saveMeta = null;
+        return;
+      }
+      const offer = { id: this.saveMeta.id, name: this.saveMeta.name, label: this.saveMeta.label, state: done.bytes };
+      this.saveMeta = null;
+      this.opts.onSaveOffer(offer);
+      return;
+    }
     const inputs = decodeInputs(data);
     if (inputs) {
       this.opts.onRemote(inputs);
