@@ -38,6 +38,7 @@ const roomClose = document.querySelector<HTMLButtonElement>("#room-close")!;
 const roomBackdrop = document.querySelector<HTMLButtonElement>("#room-backdrop")!;
 const drop = document.querySelector<HTMLLabelElement>("#drop")!;
 const dropText = drop.childNodes[0];
+const welcome = document.querySelector<HTMLElement>("#welcome")!;
 const fileInput = document.querySelector<HTMLInputElement>("#file")!;
 const banner = document.querySelector<HTMLElement>("#banner")!;
 const bannerText = document.querySelector<HTMLElement>("#banner-text")!;
@@ -234,7 +235,7 @@ function replaceScreen() {
   applyZoom();
 }
 
-function stopPlay() {
+function stopPlay(next: "drop" | "welcome" = "drop") {
   window.clearTimeout(resetTimer);
   relaunching = false;
   romBytes = null;
@@ -244,7 +245,14 @@ function stopPlay() {
   pads = null;
   loadedGame = null;
   conceal(picture, "down");
-  reveal(drop, "down");
+  if (next === "welcome") {
+    conceal(drop, "down");
+    reveal(welcome, "down");
+    roomState.textContent = "Partida local. A sala leva o outro controle para outra casa.";
+  } else {
+    conceal(welcome, "down");
+    reveal(drop, "down");
+  }
   hideBubble(0);
   hideBubble(1);
   if (transferred) replaceScreen();
@@ -311,6 +319,7 @@ async function boot(game: Game, rom: Uint8Array) {
   selected = game;
   screen.hidden = false;
   conceal(drop, "down");
+  conceal(welcome, "down");
   reveal(picture, "down");
   setBanner("");
   roomState.textContent = `${game.title} nesta máquina. Os dois teclados jogam aqui.`;
@@ -1627,6 +1636,13 @@ function dismissAlert() {
   if (mode === "reset-wait" || mode === "reset-in") setBanner("Reinício cancelado.");
   closeAlert();
 }
+
+document.querySelector("#close-play")!.addEventListener("click", () => {
+  if (!loadedGame) return;
+  if (session) leaveRoom();
+  stopPlay("welcome");
+  setBanner("");
+});
 
 document.querySelector("#forget")!.addEventListener("click", () => {
   if (alertMode) return;
