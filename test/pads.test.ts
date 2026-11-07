@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assignPlayers, hatBits, padLabel, snesBits, superPressed, type PadLike } from "../apps/web/src/pads.ts";
+import { assignPlayers, controlGuide, hatBits, padLabel, snesBits, superPressed, type PadLike } from "../apps/web/src/pads.ts";
 
 const B = 1 << 0;
 const Y = 1 << 1;
@@ -145,6 +145,18 @@ test("R2 dispara o super e não segura o R do Super Nintendo", () => {
   });
   assert.equal(snesBits(ps4) & R, 0);
   assert.equal(superPressed(ps4), true);
+});
+
+test("o manual do Xbox e do PS4 aponta o botão certo", () => {
+  const xbox = pad({ id: "Xbox Series Controller (Vendor: 045e Product: 0b12)", mapping: "standard" });
+  const ps4 = pad({ id: "Wireless Controller (Vendor: 054c Product: 09cc)" });
+  const xboxGuide = controlGuide(xbox);
+  const ps4Guide = controlGuide(ps4);
+  assert.equal(xboxGuide.find((row) => row.button === "A")?.does, "B");
+  assert.equal(xboxGuide.find((row) => row.button === "RT")?.does, "Super");
+  assert.equal(ps4Guide.find((row) => row.button === "X")?.does, "B");
+  assert.equal(ps4Guide.find((row) => row.button === "R2")?.does, "Super");
+  assert.equal(ps4Guide.find((row) => row.button === "Quadrado")?.does, "Y");
 });
 
 test("dois controles ocupam jogador 1 e jogador 2, pulando buraco", () => {

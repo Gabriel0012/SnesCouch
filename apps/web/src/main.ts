@@ -1,6 +1,7 @@
 import { Speaker } from "./audio.ts";
 import { kindFromLabel, padIcon } from "./icons.ts";
-import { padStatus, readPads, readSupers } from "./input.ts";
+import { KEYBOARD_GUIDE, connectedPads, padStatus, readPads, readSupers } from "./input.ts";
+import { controlGuide, padLabel } from "./pads.ts";
 import { games, matchRom, type Game } from "./rom.ts";
 import { OnlineSession, type ChatLine, type Role, type Seat } from "./session.ts";
 import { FIGHTERS, LEFT, RIGHT, SELECT, fighterLabel, superSteps, type Fighter } from "./supers.ts";
@@ -14,6 +15,11 @@ const fileInput = document.querySelector<HTMLInputElement>("#file")!;
 const banner = document.querySelector<HTMLElement>("#banner")!;
 const bannerText = document.querySelector<HTMLElement>("#banner-text")!;
 const roomState = document.querySelector<HTMLElement>("#room-state")!;
+const roomCode = document.querySelector<HTMLElement>("#room-code")!;
+const roomTitle = document.querySelector<HTMLElement>("#room-title")!;
+const chatPanel = document.querySelector<HTMLElement>(".chat")!;
+const manual = document.querySelector<HTMLElement>("#manual")!;
+const manualBody = document.querySelector<HTMLElement>("#manual-body")!;
 const delayLabel = document.querySelector<HTMLElement>("#delay")!;
 const codeInput = document.querySelector<HTMLInputElement>("#code")!;
 const nickInput = document.querySelector<HTMLInputElement>("#nick")!;
@@ -231,6 +237,7 @@ function onWorker(message: {
   }
   if (message.t === "aspect" && message.w && message.h) {
     screen.style.aspectRatio = `${message.w} / ${message.h}`;
+    picture.style.setProperty("--ratio", `${message.w} / ${message.h}`);
   }
   if (message.t === "local-input" && message.frames) session?.noteInputs(message.frames);
   if (message.t === "check" && message.frame !== undefined && message.hash !== undefined) {
@@ -397,9 +404,51 @@ function pushChat(line: ChatLine) {
 }
 
 function setChatEnabled(on: boolean) {
+  chatPanel.hidden = !on;
   chatInput.disabled = !on;
   chatButton.disabled = !on;
   chatInput.placeholder = on ? "Escreve para a sala" : "A conversa abre na sala";
+}
+
+function setRoomCode(code: string | null) {
+  roomCode.hidden = !code;
+  roomTitle.hidden = !!code;
+  roomCode.textContent = code ?? "";
+}
+
+function fillManual() {
+  manualBody.replaceChildren();
+  const pads = connectedPads();
+  pads.forEach((pad, index) => {
+    const title = document.createElement("h3");
+    title.textContent = `Jogador ${index + 1} · ${pad ? padLabel(pad) : "Teclado"}`;
+    const rows = pad ? controlGuide(pad) : KEYBOARD_GUIDE[index];
+    manualBody.append(title);
+    for (const row of rows) {
+      const line = document.createElement("p");
+      line.className = "manual-row";
+      const button = document.createElement("b");
+      button.textContent = row.button;
+      line.append(button, document.createTextNode(row.does));
+      manualBody.append(line);
+    }
+  });
+  const note = document.createElement("p");
+  note.className = "note";
+  note.textContent = session
+    ? "Na sala, esta máquina usa o jogador 1. No Final Fight 3, Shift+F (jogador 2: V+;) troca Haggar/Guy, Lucia e Dean. Haggar, Guy e Dean precisam estar segurando o inimigo."
+    : "No Final Fight 3, Shift+F (jogador 2: V+;) troca Haggar/Guy, Lucia e Dean. Haggar, Guy e Dean precisam estar segurando o inimigo.";
+  manualBody.append(note);
+}
+
+function openManual() {
+  fillManual();
+  manual.hidden = false;
+  document.querySelector<HTMLButtonElement>("#manual-close")?.focus();
+}
+
+function closeManual() {
+  manual.hidden = true;
 }
 
 function playerLine(name: string, control: string, state: string) {
@@ -569,6 +618,7 @@ async function connect(role: Role, code: string) {
       session = null;
       roster = null;
       setChatEnabled(false);
+      setRoomCode(null);
       leaveButton.hidden = true;
       typingSent = false;
       hideConfirm();
@@ -621,6 +671,7 @@ async function connect(role: Role, code: string) {
     checkpoint: askCheckpoint,
   });
   session = mine;
+  setRoomCode(code);
   leaveButton.hidden = false;
   mine.setProfile(localControl(), nick);
   setChatEnabled(true);
@@ -631,6 +682,7 @@ async function connect(role: Role, code: string) {
     if (session === mine) session = null;
     leaveButton.hidden = true;
     setChatEnabled(false);
+    setRoomCode(null);
     setBanner(error instanceof Error ? error.message : "Não foi possível abrir a sala.");
   }
 }
@@ -727,11 +779,9 @@ copyButton.addEventListener("click", () => {
     return;
   }
   const done = () => {
-    const previous = copyButton.textContent;
-    copyButton.textContent = "Copiado";
-    window.setTimeout(() => {
-      copyButton.textContent = previous;
-    }, 1200);
+    copyButton.setAttribute("aria-label", "Copiado");
+    setBanner("Código copiado.");
+    window.setTimeout(() => copyButton.setAttribute("aria-label", "Copiar"), 1200);
   };
   if (navigator.clipboard?.writeText) {
     void navigator.clipboard.writeText(code).then(done, () => {
@@ -782,6 +832,7 @@ function leaveRoom() {
   current.close();
   roster = null;
   setChatEnabled(false);
+  setRoomCode(null);
   leaveButton.hidden = true;
   typingSent = false;
   hideConfirm();
@@ -796,6 +847,15 @@ function leaveRoom() {
 }
 
 leaveButton.addEventListener("click", () => leaveRoom());
+
+document.querySelector("#manual-open")!.addEventListener("click", () => openManual());
+document.querySelector("#manual-close")!.addEventListener("click", () => closeManual());
+manual.addEventListener("click", (event) => {
+  if (event.target === manual) closeManual();
+});
+window.addEventListener("keydown", (event) => {
+  if (event.code === "Escape" && !manual.hidden) closeManual();
+});
 
 confirmYes.addEventListener("click", () => {
   if (!saveDialog) return;

@@ -198,6 +198,93 @@ export function superPressed(pad: PadLike | null): boolean {
   return axisDown(pad, 4) || axisDown(pad, 5);
 }
 
+export interface GuideRow {
+  button: string;
+  does: string;
+}
+
+function standardGuide(label: string): GuideRow[] {
+  const play = label === "PS4" || label === "PS5";
+  const plain = label === "Fliperama" || label === "Controle USB";
+  const face = play ? ["X", "Círculo", "Quadrado", "Triângulo"] : plain ? ["Baixo", "Direita", "Esquerda", "Cima"] : ["A", "B", "X", "Y"];
+  const shoulder = play ? ["L1", "R1", "L2", "R2"] : plain ? ["L", "R", "L2", "R2"] : ["LB", "RB", "LT", "RT"];
+  const menu = play ? [label === "PS5" ? "Create" : "Share", "Options"] : plain ? ["Select", "Start"] : ["View", "Menu"];
+  return [
+    { button: "Direcional", does: "Direções" },
+    { button: label === "Fliperama" ? "Alavanca" : "Analógico esquerdo", does: "Direções" },
+    { button: face[0], does: "B" },
+    { button: face[1], does: "A" },
+    { button: face[2], does: "Y" },
+    { button: face[3], does: "X" },
+    { button: shoulder[0], does: "L" },
+    { button: shoulder[1], does: "R" },
+    { button: shoulder[2], does: "L" },
+    { button: shoulder[3], does: "Super" },
+    { button: menu[0], does: "Select" },
+    { button: menu[1], does: "Start" },
+  ];
+}
+
+/** Physical buttons of the connected pad, and the Super Nintendo action each one does. */
+export function controlGuide(pad: PadLike): GuideRow[] {
+  const label = padLabel(pad);
+  switch (layoutOf(pad)) {
+    case "ps":
+      return [
+        { button: "Direcional", does: "Direções" },
+        { button: "Analógico esquerdo", does: "Direções" },
+        { button: "X", does: "B" },
+        { button: "Círculo", does: "A" },
+        { button: "Quadrado", does: "Y" },
+        { button: "Triângulo", does: "X" },
+        { button: "L1", does: "L" },
+        { button: "R1", does: "R" },
+        { button: "L2", does: "L" },
+        { button: "R2", does: "Super" },
+        { button: label === "PS5" ? "Create" : "Share", does: "Select" },
+        { button: "Options", does: "Start" },
+      ];
+    case "dragon":
+      return [
+        { button: "Analógico", does: "Direções" },
+        { button: "Botão 1", does: "X" },
+        { button: "Botão 2", does: "A" },
+        { button: "Botão 3", does: "B" },
+        { button: "Botão 4", does: "Y" },
+        { button: "Botão 5", does: "L" },
+        { button: "Botão 6", does: "R" },
+        { button: "Botão 7", does: "Select" },
+        { button: "Botão 8", does: "Start" },
+      ];
+    case "buffalo":
+      return [
+        { button: "Analógico", does: "Direções" },
+        { button: "A", does: "A" },
+        { button: "B", does: "B" },
+        { button: "X", does: "X" },
+        { button: "Y", does: "Y" },
+        { button: "L", does: "L" },
+        { button: "R", does: "R" },
+        { button: "Select", does: "Select" },
+        { button: "Start", does: "Start" },
+      ];
+    case "snes":
+      return [
+        { button: "Direcional", does: "Direções" },
+        { button: "B", does: "B" },
+        { button: "A", does: "A" },
+        { button: "Y", does: "Y" },
+        { button: "X", does: "X" },
+        { button: "L", does: "L" },
+        { button: "R", does: "R" },
+        { button: "Select", does: "Select" },
+        { button: "Start", does: "Start" },
+      ];
+    default:
+      return standardGuide(label);
+  }
+}
+
 export function padLabel(pad: PadLike): string {
   const id = idOf(pad);
   if (isOfficialSnes(id) || id.includes("snes") || id.includes("sfc30")) return "Super Nintendo";

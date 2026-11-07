@@ -29,6 +29,6 @@ export function padIcon(kind: PadKind): HTMLImageElement {
   const img = document.createElement("img");
   img.src = src[kind];
   img.alt = "";
-  img.className = "pad-icon";
+  img.className = kind === "teclado" || kind === "fliperama" ? "pad-icon" : "pad-icon pad-color";
   return img;
 }

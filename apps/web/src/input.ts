@@ -29,6 +29,8 @@ const PLAYER_KEYS = [
 const down = new Set<string>();
 
 function typing(target: EventTarget | null): boolean {
+  const manual = document.querySelector("#manual");
+  if (manual instanceof HTMLElement && !manual.hidden) return true;
   return target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
 }
 
@@ -73,3 +75,38 @@ export function padStatus(): [string | null, string | null] {
   const [first, second] = livePads();
   return [first ? padLabel(first) : null, second ? padLabel(second) : null];
 }
+
+export function connectedPads(): [PadLike | null, PadLike | null] {
+  return livePads();
+}
+
+export const KEYBOARD_GUIDE: { button: string; does: string }[][] = [
+  [
+    { button: "Setas", does: "Direções" },
+    { button: "Z", does: "B" },
+    { button: "X", does: "Y" },
+    { button: "A", does: "A" },
+    { button: "S", does: "X" },
+    { button: "Q", does: "L" },
+    { button: "W", does: "R" },
+    { button: "Espaço", does: "Start" },
+    { button: "Shift esquerdo", does: "Select" },
+    { button: "F", does: "Super" },
+    { button: "Enter", does: "Abre a conversa" },
+  ],
+  [
+    { button: "I", does: "Cima" },
+    { button: "K", does: "Baixo" },
+    { button: "J", does: "Esquerda" },
+    { button: "L", does: "Direita" },
+    { button: "N", does: "B" },
+    { button: "M", does: "Y" },
+    { button: "G", does: "A" },
+    { button: "H", does: "X" },
+    { button: "U", does: "L" },
+    { button: "O", does: "R" },
+    { button: "P", does: "Start" },
+    { button: "V", does: "Select" },
+    { button: ";", does: "Super" },
+  ],
+];
