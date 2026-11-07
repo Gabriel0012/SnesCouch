@@ -73,10 +73,39 @@ header {
 #install[hidden] { display: none !important; }
 #install:active { box-shadow: inset -3px -3px 0 #111, inset 3px 3px 0 #4a4f5a; }
 footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   background: var(--well);
   border-top: 4px solid var(--ink);
   color: var(--muted);
   font-size: 13px;
+}
+footer p { margin: 0; flex: 1 1 16rem; }
+footer a.coffee {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.55rem;
+  background: var(--x);
+  color: #f4f7ff;
+  text-decoration: none;
+  box-shadow: inset -3px -3px 0 #0d2f99, inset 3px 3px 0 #9db6ff, 3px 3px 0 #000;
+}
+footer a.coffee:active {
+  transform: translate(2px, 2px);
+  box-shadow: inset -3px -3px 0 #0d2f99, inset 3px 3px 0 #9db6ff;
+}
+footer a.coffee:focus-visible { outline: 2px solid var(--b); outline-offset: 2px; }
+footer a.coffee[hidden] { display: none; }
+footer a.coffee img {
+  width: 22px;
+  height: 24px;
+  object-fit: contain;
+  image-rendering: pixelated;
 }
 
 .mark {
@@ -698,6 +727,39 @@ header .lede { color: #6e7585; margin: 0; }
   min-width: 0;
 }
 .join-line #code { flex: 1; width: auto; min-width: 0; }
+#create, #join {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+#create {
+  background: var(--x);
+  color: #f4f7ff;
+  box-shadow: inset -3px -3px 0 #0d2f99, inset 3px 3px 0 #9db6ff, 3px 3px 0 #000;
+}
+#create:active { box-shadow: inset -3px -3px 0 #0d2f99, inset 3px 3px 0 #9db6ff; }
+#join {
+  background: var(--y);
+  color: #06210f;
+  box-shadow: inset -3px -3px 0 #046b30, inset 3px 3px 0 #7dffa8, 3px 3px 0 #000;
+}
+#join:active { box-shadow: inset -3px -3px 0 #046b30, inset 3px 3px 0 #7dffa8; }
+#create i, #join i {
+  flex: none;
+  background: currentColor;
+}
+#create i {
+  width: 0.75rem;
+  height: 1.2rem;
+  -webkit-mask: url("./assets/door.png") center / contain no-repeat;
+  mask: url("./assets/door.png") center / contain no-repeat;
+}
+#join i {
+  width: 1.15rem;
+  height: 1.15rem;
+  -webkit-mask: url("./assets/enter.png") center / contain no-repeat;
+  mask: url("./assets/enter.png") center / contain no-repeat;
+}
 #copy {
   flex: none;
   width: 2.45rem;

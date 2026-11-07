@@ -1712,6 +1712,23 @@ function pollSupers(padsNow: [number, number], mode: "local" | "online") {
 
 window.addEventListener("blur", () => writePads(0, 0));
 
+async function loadCoffee() {
+  const link = document.querySelector<HTMLAnchorElement>("#coffee");
+  if (!link) return;
+  try {
+    const response = await fetch("/api/coffee");
+    if (!response.ok) return;
+    const body = await response.json() as { url?: unknown };
+    if (typeof body.url !== "string") return;
+    const target = new URL(body.url);
+    if (target.protocol !== "https:") return;
+    link.href = target.href;
+    link.hidden = false;
+  } catch {
+    // Sem a variável, o botão fica escondido.
+  }
+}
+
 function pump() {
   const mode = session ? "online" : "local";
   const padsNow = readPads(mode);
@@ -1728,6 +1745,7 @@ if (!crossOriginIsolated) {
 }
 
 applyZoom();
+void loadCoffee();
 paintVolume();
 updateDrop();
 renderGames();

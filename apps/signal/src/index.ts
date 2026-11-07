@@ -12,6 +12,18 @@ function headers(extra?: HeadersInit) {
   return Object.fromEntries(baseHeaders(extra));
 }
 
+function coffeeUrl(env: Env): string | null {
+  const value = env.MERCADO_PAGO_URL?.trim();
+  if (!value) return null;
+  try {
+    const target = new URL(value);
+    if (target.protocol !== "https:") return null;
+    return target.toString();
+  } catch {
+    return null;
+  }
+}
+
 function ice(env: Env) {
   const iceServers: { urls: string; username?: string; credential?: string }[] = [
     { urls: "stun:stun.l.google.com:19302" },
@@ -36,6 +48,9 @@ export default {
     }
     if (url.pathname === "/api/ice") {
       return Response.json({ iceServers: ice(env) }, { headers: headers() });
+    }
+    if (url.pathname === "/api/coffee") {
+      return Response.json({ url: coffeeUrl(env) }, { headers: headers() });
     }
     const match = url.pathname.match(/^\/api\/rooms\/([A-HJ-NP-Z2-9]{5})$/);
     if (match) {

@@ -11,4 +11,6 @@ export interface Env {
   DISCORD_CLIENT_SECRET?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
+  // Link do botão de café. Fica no .dev.vars e como secret do Worker. Sem valor, o botão some.
+  MERCADO_PAGO_URL?: string;
 }

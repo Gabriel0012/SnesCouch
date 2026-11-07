@@ -131,11 +131,11 @@
           </label>
           <p id="room-state">Partida local. A sala leva o outro controle para outra casa.</p>
           <div class="row room-actions">
-            <button id="create" type="button">Criar sala</button>
+            <button id="create" type="button"><i aria-hidden="true"></i>Criar sala</button>
             <div class="join-line">
               <input id="code" maxlength="5" autocomplete="off" spellcheck="false" placeholder="Código" />
               <button id="copy" type="button" aria-label="Copiar"></button>
-              <button id="join" type="button">Entrar</button>
+              <button id="join" type="button"><i aria-hidden="true"></i>Entrar</button>
             </div>
             <button id="leave" type="button" hidden>Sair da sala</button>
           </div>
@@ -196,8 +196,14 @@
       </div>
     </div>
     <footer class="arrive">
-      Projeto de fã, sem vínculo com a Nintendo. Super Nintendo Entertainment System é marca da Nintendo.
-      O núcleo é o Snes9x, só para uso pessoal e não comercial.
+      <p>
+        Projeto de fã, sem vínculo com a Nintendo. Super Nintendo Entertainment System é marca da Nintendo.
+        O núcleo é o Snes9x, só para uso pessoal e não comercial.
+      </p>
+      <a id="coffee" class="coffee" hidden target="_blank" rel="noopener noreferrer">
+        <img src="/coffee.png" alt="" width="22" height="24" />
+        Pague-me um café
+      </a>
     </footer>
     <div id="tour" hidden>
       <div class="tour-sheet" role="dialog" aria-modal="true" aria-labelledby="tour-title">

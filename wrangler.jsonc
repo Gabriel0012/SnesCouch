@@ -16,6 +16,7 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
   // O save na nuvem está desligado por custo. Não recolocar o R2. Ver AGENTS.md.
+  // MERCADO_PAGO_URL é secret do Worker. O link não fica neste arquivo.
   "d1_databases": [
     {
       "binding": "DB",

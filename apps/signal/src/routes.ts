@@ -41,7 +41,7 @@ async function requireUser(request: Request, env: Env): Promise<UserRow | Respon
 
 export async function routeAccount(request: Request, env: Env): Promise<Response | null> {
   const path = new URL(request.url).pathname;
-  if (path === "/api/health" || path === "/api/ice" || path.startsWith("/api/rooms/")) return null;
+  if (path === "/api/health" || path === "/api/ice" || path === "/api/coffee" || path.startsWith("/api/rooms/")) return null;
   const account = path.startsWith("/api/auth")
     || path.startsWith("/api/saves")
     || path.startsWith("/api/friends")
