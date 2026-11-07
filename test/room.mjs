@@ -4,7 +4,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const port = 8799;
-const sha1 = "5b99127cb3c60c5ebce11d9b91bd09914ebc53f2";
+const sha1 = "09d542fbb06dcafec26602bdc626bcdaf56b23cb";
 const base = `http://127.0.0.1:${port}`;
 const signalDir = fileURLToPath(new URL("../apps/signal/", import.meta.url));
 
@@ -35,7 +35,7 @@ function startServer() {
 }
 
 function socket(code, role, hash = sha1) {
-  return new WebSocket(`ws://127.0.0.1:${port}/api/rooms/${code}?role=${role}&game=super-bomberman&sha1=${hash}`);
+  return new WebSocket(`ws://127.0.0.1:${port}/api/rooms/${code}?role=${role}&game=final-fight-3&sha1=${hash}`);
 }
 
 function opened(ws) {

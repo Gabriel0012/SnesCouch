@@ -1,35 +1,19 @@
 {
   "games": [
     {
-      "id": "super-bomberman",
-      "title": "Super Bomberman",
-      "region": "USA",
-      "sha1": "5b99127cb3c60c5ebce11d9b91bd09914ebc53f2",
-      "bytes": 524288,
-      "players": 2
-    },
-    {
-      "id": "contra-iii",
-      "title": "Contra III: The Alien Wars",
-      "region": "USA",
-      "sha1": "265886e3f665adf2507e7b2f08b6b2ed9d0018b2",
-      "bytes": 1048576,
-      "players": 2
-    },
-    {
-      "id": "tmnt-iv",
-      "title": "Teenage Mutant Ninja Turtles IV: Turtles in Time",
-      "region": "USA",
-      "sha1": "4f8fc0f45023e0339e501054b253c33f479a001a",
-      "bytes": 1048576,
-      "players": 2
-    },
-    {
       "id": "final-fight-3",
       "title": "Final Fight 3",
       "region": "USA",
       "sha1": "09d542fbb06dcafec26602bdc626bcdaf56b23cb",
       "bytes": 3145728,
+      "players": 2
+    },
+    {
+      "id": "pocky-rocky-2",
+      "title": "Pocky & Rocky 2",
+      "region": "USA",
+      "sha1": "4a702384ae4aa0500c975f12ceed578dd8c02910",
+      "bytes": 1572864,
       "players": 2
     }
   ]

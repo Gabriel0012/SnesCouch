@@ -59,7 +59,7 @@ function setBanner(text: string) {
 }
 
 function coverOf(id: string) {
-  if (id === "final-fight-3") return "/covers/final-fight-3.jpg";
+  if (id === "final-fight-3" || id === "pocky-rocky-2") return `/covers/${id}.jpg`;
   return `/covers/${id}.svg`;
 }
 
