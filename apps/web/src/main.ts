@@ -2,6 +2,7 @@ import {
   acceptFriend,
   AccountError,
   askFriend,
+  cloudSaves,
   declineFriend,
   downloadSave,
   downloadShot,
@@ -768,7 +769,7 @@ async function renderSaves() {
 }
 
 async function slotsFor(game: Game) {
-  if (!account) return saveList(game.id);
+  if (!account || !cloudSaves) return saveList(game.id);
   try {
     return await syncSaves(game);
   } catch (error) {
@@ -828,7 +829,7 @@ async function writeSlot(game: Game, slot: number) {
     const origin = session ? "online" : "local";
     await saveState(game.id, slot, saved.state, saved.shot, origin);
     let cloud = false;
-    if (account) {
+    if (account && cloudSaves) {
       try {
         const savedAt = await uploadSave(game.id, slot, game.sha1, saved.state, saved.shot);
         await saveState(game.id, slot, saved.state, saved.shot, origin, savedAt);
@@ -842,7 +843,7 @@ async function writeSlot(game: Game, slot: number) {
     }
     const shotNote = saved.shot ? "com o print da tela" : "sem o print da tela";
     if (cloud) setBanner(`Save ${slot} gravado na conta, ${shotNote}.`);
-    else if (account) setBanner(`Save ${slot} gravado neste navegador. A nuvem não respondeu.`);
+    else if (account && cloudSaves) setBanner(`Save ${slot} gravado neste navegador. A nuvem não respondeu.`);
     else setBanner(`Save ${slot} gravado, ${shotNote}.`);
     await renderSaves();
   } catch (error) {
@@ -1127,7 +1128,7 @@ function paintAccount() {
   accountOut.hidden = logged;
   accountIn.hidden = !logged;
   friendsSection.hidden = !logged;
-  savesCloud.hidden = !logged;
+  savesCloud.hidden = !logged || !cloudSaves;
   nickInput.disabled = logged;
   if (account) {
     accountName.textContent = account.name;
@@ -1595,9 +1596,7 @@ function openAlert(mode: AlertMode, name = "") {
   alertMode = mode;
   alertYes.hidden = mode === "reset-wait";
   if (mode === "forget") {
-    alertText.textContent = account
-      ? `A ROM e os saves de ${selected.title} saem deste navegador. A cópia na conta continua. A partida para.`
-      : `A ROM e os saves de ${selected.title} saem deste navegador. A partida para. Não tem como desfazer.`;
+    alertText.textContent = `A ROM e os saves de ${selected.title} saem deste navegador. A partida para. Não tem como desfazer.`;
     alertYes.textContent = "Esquecer";
   } else if (mode === "reset-local") {
     alertText.textContent = "Reiniciar o jogo agora? Ele volta para o começo.";

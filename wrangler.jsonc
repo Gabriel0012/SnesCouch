@@ -15,19 +15,12 @@
     "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
-  // `wrangler d1 create snes-couch` e cole o database_id antes de publicar.
-  // `wrangler r2 bucket create snes-couch-saves`
+  // O save na nuvem está desligado por custo. Não recolocar o R2. Ver AGENTS.md.
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "snes-couch",
-      "database_id": "00000000-0000-0000-0000-000000000000"
-    }
-  ],
-  "r2_buckets": [
-    {
-      "binding": "SAVES",
-      "bucket_name": "snes-couch-saves"
+      "database_id": "a5cb9ff2-a92a-4da7-8906-4a9bb5244724"
     }
   ]
 }

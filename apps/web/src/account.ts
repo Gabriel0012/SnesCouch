@@ -1,3 +1,6 @@
+/** Save na nuvem desligado por custo. O arquivo ficaria no R2. Ver AGENTS.md. */
+export const cloudSaves = false;
+
 export class AccountError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);

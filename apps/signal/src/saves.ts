@@ -14,7 +14,13 @@ function key(userId: string, gameId: string, slot: number, shot = false): string
   return `saves/${userId}/${gameId}/${slot}${shot ? ".png" : ""}`;
 }
 
+function bucket(env: Env): R2Bucket | Response {
+  if (env.SAVES) return env.SAVES;
+  return problem("O save na nuvem está desligado.", 503);
+}
+
 export async function listSaves(request: Request, env: Env, user: UserRow): Promise<Response> {
+  if (!env.SAVES) return problem("O save na nuvem está desligado.", 503);
   const gameId = new URL(request.url).searchParams.get("game") ?? "";
   if (!gameOf(gameId)) return problem("Jogo desconhecido.", 400);
   const rows = await env.DB.prepare(
@@ -31,8 +37,10 @@ export async function putSave(request: Request, env: Env, user: UserRow, gameId:
   if (sha1 !== game.sha1) return problem("Esse save não é da ROM aberta.", 400);
   const bytes = new Uint8Array(await request.arrayBuffer());
   if (bytes.byteLength === 0 || bytes.byteLength > STATE_MAX) return problem("O save está grande demais.", 413);
+  const store = bucket(env);
+  if (store instanceof Response) return store;
   const savedAt = Date.now();
-  await env.SAVES.put(key(user.id, gameId, slot), bytes);
+  await store.put(key(user.id, gameId, slot), bytes);
   await env.DB.prepare(
     `INSERT INTO saves (user_id, game_id, slot, sha1, saved_at) VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(user_id, game_id, slot) DO UPDATE SET sha1 = excluded.sha1, saved_at = excluded.saved_at`,
@@ -48,7 +56,9 @@ export async function putShot(request: Request, env: Env, user: UserRow, gameId:
   if (!row) return problem("Grava o save antes do print.", 404);
   const bytes = new Uint8Array(await request.arrayBuffer());
   if (bytes.byteLength === 0 || bytes.byteLength > SHOT_MAX) return problem("O print está grande demais.", 413);
-  await env.SAVES.put(key(user.id, gameId, slot, true), bytes, { httpMetadata: { contentType: "image/png" } });
+  const store = bucket(env);
+  if (store instanceof Response) return store;
+  await store.put(key(user.id, gameId, slot, true), bytes, { httpMetadata: { contentType: "image/png" } });
   return json({ ok: true });
 }
 
@@ -58,7 +68,9 @@ export async function getSave(env: Env, user: UserRow, gameId: string, slot: num
     "SELECT sha1 FROM saves WHERE user_id = ? AND game_id = ? AND slot = ?",
   ).bind(user.id, gameId, slot).first<{ sha1: string }>();
   if (!row) return problem("Save não encontrado.", 404);
-  const object = await env.SAVES.get(key(user.id, gameId, slot));
+  const store = bucket(env);
+  if (store instanceof Response) return store;
+  const object = await store.get(key(user.id, gameId, slot));
   if (!object) return problem("Save não encontrado.", 404);
   const headers = new Headers({ "content-type": "application/octet-stream", "cache-control": "no-store", "x-sha1": row.sha1 });
   headers.set("Cross-Origin-Opener-Policy", "same-origin");
@@ -69,7 +81,9 @@ export async function getSave(env: Env, user: UserRow, gameId: string, slot: num
 
 export async function getShot(env: Env, user: UserRow, gameId: string, slot: number): Promise<Response> {
   if (!gameOf(gameId)) return problem("Jogo desconhecido.", 400);
-  const object = await env.SAVES.get(key(user.id, gameId, slot, true));
+  const store = bucket(env);
+  if (store instanceof Response) return store;
+  const object = await store.get(key(user.id, gameId, slot, true));
   if (!object) return problem("Sem print.", 404);
   const headers = new Headers({ "content-type": "image/png", "cache-control": "private, max-age=60" });
   headers.set("Cross-Origin-Opener-Policy", "same-origin");

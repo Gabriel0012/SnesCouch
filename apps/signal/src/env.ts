@@ -2,7 +2,8 @@ export interface Env {
   ROOMS: DurableObjectNamespace;
   ASSETS?: Fetcher;
   DB: D1Database;
-  SAVES: R2Bucket;
+  // Ausente de propósito. O save na nuvem está desligado. Ver AGENTS.md.
+  SAVES?: R2Bucket;
   TURN_URL?: string;
   TURN_USERNAME?: string;
   TURN_CREDENTIAL?: string;
