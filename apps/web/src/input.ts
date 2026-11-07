@@ -1,4 +1,4 @@
-import { assignPlayers, padLabel, snesBits, superPressed, type PadLike } from "./pads.ts";
+import { assignPlayers, keyboardScheme, padLabel, snesBits, superPressed, type PadLike } from "./pads.ts";
 
 const B = 1 << 0;
 const Y = 1 << 1;
@@ -67,18 +67,40 @@ function livePads(): [PadLike | null, PadLike | null] {
 
 const SUPER_KEYS = ["KeyF", "Semicolon"] as const;
 
-export function readSupers(): [boolean, boolean] {
-  if (!document.hasFocus()) return [false, false];
-  const [first, second] = livePads();
-  const keys = typing(document.activeElement);
-  return [(keys ? false : down.has(SUPER_KEYS[0])) || superPressed(first), (keys ? false : down.has(SUPER_KEYS[1])) || superPressed(second)];
+function schemeBits(slot: 0 | 1, seats: [PadLike | null, PadLike | null], blocked: boolean): number {
+  if (blocked) return 0;
+  const scheme = keyboardScheme(slot, seats);
+  return scheme === null ? 0 : fromKeys(PLAYER_KEYS[scheme]);
 }
 
-export function readPads(): [number, number] {
+function schemeSuper(slot: 0 | 1, seats: [PadLike | null, PadLike | null], blocked: boolean): boolean {
+  if (blocked) return false;
+  const scheme = keyboardScheme(slot, seats);
+  return scheme !== null && down.has(SUPER_KEYS[scheme]);
+}
+
+export function readSupers(mode: "local" | "online" = "local"): [boolean, boolean] {
+  if (!document.hasFocus()) return [false, false];
+  const seats = livePads();
+  const blocked = typing(document.activeElement);
+  if (mode === "online") {
+    return [blocked ? superPressed(seats[0]) : down.has(SUPER_KEYS[0]) || superPressed(seats[0]), false];
+  }
+  return [schemeSuper(0, seats, blocked) || superPressed(seats[0]), schemeSuper(1, seats, blocked) || superPressed(seats[1])];
+}
+
+export function readPads(mode: "local" | "online" = "local"): [number, number] {
   if (!document.hasFocus()) return [0, 0];
-  const [first, second] = livePads();
-  const keys: [number, number] = typing(document.activeElement) ? [0, 0] : [fromKeys(PLAYER_KEYS[0]), fromKeys(PLAYER_KEYS[1])];
-  return [keys[0] | snesBits(first) | touchBits, keys[1] | snesBits(second)];
+  const seats = livePads();
+  const blocked = typing(document.activeElement);
+  if (mode === "online") {
+    const keys = blocked ? 0 : fromKeys(PLAYER_KEYS[0]);
+    return [keys | snesBits(seats[0]) | touchBits, 0];
+  }
+  return [
+    schemeBits(0, seats, blocked) | snesBits(seats[0]) | touchBits,
+    schemeBits(1, seats, blocked) | snesBits(seats[1]),
+  ];
 }
 
 export function padStatus(): [string | null, string | null] {

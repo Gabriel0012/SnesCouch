@@ -1,3 +1,4 @@
+import padUrl from "./assets/snes-pad.png";
 import { extraKeys, keyboardRows, spotsFor, type GuideLike, type KeyFace, type Spot, type SpotId } from "./actions.ts";
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -83,74 +84,51 @@ function callout(spot: Spot, where: "left" | "right" | "bottom"): HTMLElement {
   return item;
 }
 
-function padGraphic(uid: string): SVGSVGElement {
-  const bodyId = `snes-body-${uid}`;
-  const shadowId = `snes-shadow-${uid}`;
-  const svg = svgEl("svg", { class: "snes-pad", viewBox: "0 0 400 250", role: "img", "aria-label": "Controle do Super Nintendo" });
-  const defs = svgEl("defs", {});
-  const gradient = svgEl("linearGradient", { id: bodyId, x1: "0", y1: "0", x2: "0", y2: "1" });
-  gradient.append(svgEl("stop", { offset: "0", "stop-color": "#f4f1f8" }));
-  gradient.append(svgEl("stop", { offset: "1", "stop-color": "#b7b2c6" }));
-  const shadow = svgEl("filter", { id: shadowId, x: "-8%", y: "-8%", width: "124%", height: "130%" });
-  shadow.append(svgEl("feDropShadow", { dx: "4", dy: "5", stdDeviation: "0", "flood-color": "#000", "flood-opacity": "0.9" }));
-  defs.append(gradient, shadow);
-  svg.append(defs);
+const PAD_W = 680;
+const PAD_H = 340;
 
-  svg.append(svgEl("rect", {
-    x: 28, y: 46, width: 344, height: 170, rx: 54,
-    fill: `url(#${bodyId})`, stroke: "#241f2e", "stroke-width": 3, filter: `url(#${shadowId})`,
-  }));
+/** Button boxes on snes-pad.png, in pixels: left, top, width, height. */
+const HOT: Partial<Record<SpotId, [number, number, number, number]>> = {
+  l: [125, 21, 96, 18],
+  r: [459, 21, 95, 18],
+  dpad: [85, 117, 116, 116],
+  select: [253, 175, 48, 42],
+  start: [327, 175, 49, 42],
+  x: [511, 100, 48, 49],
+  y: [444, 150, 50, 50],
+  a: [576, 150, 48, 49],
+  b: [510, 201, 49, 48],
+};
 
-  const shoulders: [SpotId, number, string][] = [["l", 52, "L"], ["r", 236, "R"]];
-  for (const [id, x, glyph] of shoulders) {
-    svg.append(svgEl("rect", {
-      "data-spot": id, x, y: 30, width: 112, height: 28, rx: 8,
-      fill: "#cdc8d8", stroke: "#3a3648", "stroke-width": 2,
-    }));
-    svg.append(svgEl("rect", { x: x + 8, y: 50, width: 96, height: 6, fill: "#8e89a0" }));
-    const text = svgEl("text", {
-      x: x + 56, y: 43, "text-anchor": "middle", "dominant-baseline": "middle",
-      fill: "#1c1e26", "font-size": 15, "font-family": "Silkscreen, Courier New, monospace",
-    });
-    text.textContent = glyph;
-    svg.append(text);
+function padPicture(): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "snes-pad-wrap";
+  const image = document.createElement("img");
+  image.className = "snes-pad";
+  image.src = padUrl;
+  image.alt = "Controle do Super Nintendo";
+  image.draggable = false;
+  const redraw = () => {
+    const map = wrap.closest(".snes-map");
+    if (map instanceof HTMLElement) drawLeads(map);
+  };
+  image.addEventListener("load", redraw);
+  wrap.append(image);
+  for (const [id, box] of Object.entries(HOT) as [SpotId, [number, number, number, number]][]) {
+    const [x, y, width, height] = box;
+    const spot = document.createElement("span");
+    spot.className = "snes-spot";
+    spot.dataset.spot = id;
+    spot.style.left = `${(x / PAD_W) * 100}%`;
+    spot.style.top = `${(y / PAD_H) * 100}%`;
+    spot.style.width = `${(width / PAD_W) * 100}%`;
+    spot.style.height = `${(height / PAD_H) * 100}%`;
+    wrap.append(spot);
   }
-
-  const dpad = svgEl("g", { "data-spot": "dpad" });
-  dpad.append(svgEl("rect", { x: 99, y: 98, width: 18, height: 72, rx: 3, fill: "#2a2a32" }));
-  dpad.append(svgEl("rect", { x: 72, y: 125, width: 72, height: 18, rx: 3, fill: "#2a2a32" }));
-  dpad.append(svgEl("rect", { x: 99, y: 98, width: 18, height: 10, rx: 2, fill: "#6a6a76" }));
-  dpad.append(svgEl("circle", { cx: 108, cy: 134, r: 5, fill: "#16161c" }));
-  svg.append(dpad);
-
-  for (const [id, x] of [["select", 156], ["start", 198]] as const) {
-    svg.append(svgEl("rect", {
-      "data-spot": id, x, y: 124, width: 36, height: 18, rx: 9,
-      fill: "#4a4658", stroke: "#211e28", "stroke-width": 2,
-    }));
-  }
-
-  const faces: [SpotId, number, number, string, string, string][] = [
-    ["x", 292, 96, "#1f5bff", "#f4f7ff", "X"],
-    ["y", 258, 134, "#00a34a", "#06210f", "Y"],
-    ["a", 332, 134, "#e10600", "#fff6f4", "A"],
-    ["b", 292, 172, "#f5c518", "#12141a", "B"],
-  ];
-  for (const [id, cx, cy, fill, ink, glyph] of faces) {
-    svg.append(svgEl("circle", { cx, cy: cy + 2, r: 17, fill: "#000", opacity: "0.35" }));
-    svg.append(svgEl("circle", { "data-spot": id, cx, cy, r: 17, fill, stroke: "#1a1208", "stroke-width": 2 }));
-    svg.append(svgEl("circle", { cx: cx - 5, cy: cy - 6, r: 4, fill: "#fff", opacity: "0.35" }));
-    const text = svgEl("text", {
-      x: cx, y: cy + 1, "text-anchor": "middle", "dominant-baseline": "middle",
-      fill: ink, "font-size": 15, "font-family": "Silkscreen, Courier New, monospace",
-    });
-    text.textContent = glyph;
-    svg.append(text);
-  }
-  return svg;
+  return wrap;
 }
 
-function diagram(spots: Spot[], uid: string): HTMLElement {
+function diagram(spots: Spot[]): HTMLElement {
   const map = document.createElement("div");
   map.className = "snes-map";
   const left = document.createElement("div");
@@ -159,9 +137,7 @@ function diagram(spots: Spot[], uid: string): HTMLElement {
   right.className = "snes-col right";
   const bottom = document.createElement("div");
   bottom.className = "snes-bottom";
-  const pad = document.createElement("div");
-  pad.className = "snes-pad-wrap";
-  pad.append(padGraphic(uid));
+  const pad = padPicture();
   const byId = new Map(spots.map((spot) => [spot.id, spot]));
   for (const id of LEFT) {
     const spot = byId.get(id);
@@ -192,29 +168,30 @@ function boxOf(el: Element, origin: DOMRect): Box {
   };
 }
 
-function route(id: string, button: Box, label: Box, pad: Box, channel: number): string {
-  const below = label.top >= pad.bottom - 2;
+function route(button: Box, label: Box, pad: Box, channel: number, slot: number): string {
+  const below = label.top >= pad.bottom + 4;
   if (below) {
-    if (Math.abs(button.cx - label.cx) < 16) return `M ${button.cx} ${button.bottom} V ${label.top - 5}`;
-    return `M ${button.cx} ${button.bottom} V ${channel} H ${label.cx} V ${label.top - 5}`;
+    const lane = Math.max(channel, pad.bottom + 6);
+    const spine = pad.cx - 12 + slot * 3;
+    const y = label.top - 5;
+    const into = label.cx < pad.cx ? Math.min(label.right + 6, spine) : Math.max(label.left - 6, spine);
+    return `M ${button.cx} ${button.bottom} V ${lane} H ${spine} V ${y} H ${into}`;
   }
   const toLeft = label.cx < pad.cx;
-  if (id === "y" && toLeft) {
-    const lane = pad.top + (pad.bottom - pad.top) * (66 / 250);
-    const endX = label.right + 8;
-    if (Math.abs(lane - label.cy) < 4) return `M ${button.cx} ${button.top} V ${lane} H ${endX}`;
-    return `M ${button.cx} ${button.top} V ${lane} H ${endX} V ${label.cy}`;
+  const opposite = toLeft ? button.cx > pad.cx : button.cx < pad.cx;
+  if (opposite) {
+    const over = pad.top - 8;
+    const endX = toLeft ? Math.min(label.right + 8, pad.left - 10) : Math.max(label.left - 8, pad.right + 10);
+    return `M ${button.cx} ${button.top} V ${over} H ${endX} V ${label.cy}`;
   }
   if (toLeft) {
-    const endX = label.right + 8;
+    const endX = Math.min(label.right + 8, pad.left - 10);
     if (Math.abs(button.cy - label.cy) < 7) return `M ${button.left} ${button.cy} H ${endX}`;
-    const gutter = Math.min(pad.left - 8, endX);
-    return `M ${button.left} ${button.cy} H ${gutter} V ${label.cy} H ${endX}`;
+    return `M ${button.left} ${button.cy} H ${pad.left - 10} V ${label.cy} H ${endX}`;
   }
-  const endX = label.left - 8;
+  const endX = Math.max(label.left - 8, pad.right + 10);
   if (Math.abs(button.cy - label.cy) < 7) return `M ${button.right} ${button.cy} H ${endX}`;
-  const gutter = Math.max(pad.right + 8, endX);
-  return `M ${button.right} ${button.cy} H ${gutter} V ${label.cy} H ${endX}`;
+  return `M ${button.right} ${button.cy} H ${pad.right + 10} V ${label.cy} H ${endX}`;
 }
 
 function drawLeads(map: HTMLElement) {
@@ -231,7 +208,7 @@ function drawLeads(map: HTMLElement) {
     label,
     box: boxOf(label, origin),
   }));
-  const below = calls.filter((call) => call.box.top >= padBox.bottom - 2);
+  const below = calls.filter((call) => call.box.top >= padBox.bottom + 4);
   const ceiling = below.length ? Math.min(...below.map((call) => call.box.top)) - 8 : padBox.bottom + 8;
   const room = Math.max(0, ceiling - (padBox.bottom + 4));
   const step = below.length > 1 ? room / (below.length - 1) : 0;
@@ -242,9 +219,9 @@ function drawLeads(map: HTMLElement) {
     const button = pad.querySelector<SVGElement>(`[data-spot="${id}"]`);
     if (!button) continue;
     const channel = Math.min(padBox.bottom + 4 + dropped * step, ceiling);
-    if (call.box.top >= padBox.bottom - 2) dropped += 1;
+    if (call.box.top >= padBox.bottom + 4) dropped += 1;
     const path = svgEl("path", {
-      d: route(id, boxOf(button, origin), call.box, padBox, channel),
+      d: route(boxOf(button, origin), call.box, padBox, channel, dropped),
       fill: "none",
       stroke: label.dataset.paint ?? "#f6f3ea",
       "stroke-width": 2,
@@ -287,6 +264,8 @@ export function paintManual(opts: {
 }) {
   const { root, tabs, card, players, gameId, note } = opts;
   const maps: HTMLElement[] = [];
+  const openTab = [...tabs.querySelectorAll("button")].findIndex((button) => button.getAttribute("aria-selected") === "true");
+  const active = openTab >= 0 && openTab < players.length ? openTab : 0;
   root.replaceChildren();
   root.classList.toggle("solo", players.length < 2);
   card.classList.toggle("solo", players.length < 2);
@@ -297,13 +276,13 @@ export function paintManual(opts: {
     section.className = "manual-pane";
     section.id = `manual-pane-${index}`;
     section.setAttribute("role", "tabpanel");
-    if (index > 0) section.classList.add("off");
+    if (index !== active) section.classList.add("off");
     const title = document.createElement("h3");
     title.textContent = `Jogador ${player.slot} · ${player.device}`;
     section.append(title);
     if (player.guide) {
       const spots = spotsFor(player.guide, gameId, player.device);
-      const map = diagram(spots, String(index));
+      const map = diagram(spots);
       maps.push(map);
       section.append(map);
       const extras = extraKeys(player.guide, gameId, player.superKey);
@@ -314,7 +293,10 @@ export function paintManual(opts: {
         section.append(extra);
       }
     } else {
-      for (const row of keyboardRows(player.keys, gameId)) section.append(keyRow(row.keys, row.action, row.idle));
+      const keys = document.createElement("div");
+      keys.className = "manual-keys";
+      for (const row of keyboardRows(player.keys, gameId)) keys.append(keyRow(row.keys, row.action, row.idle));
+      section.append(keys);
     }
     root.append(section);
 
@@ -322,9 +304,9 @@ export function paintManual(opts: {
     tab.type = "button";
     tab.setAttribute("role", "tab");
     tab.setAttribute("aria-controls", section.id);
-    tab.setAttribute("aria-selected", index === 0 ? "true" : "false");
+    tab.setAttribute("aria-selected", index === active ? "true" : "false");
     tab.textContent = `Jogador ${player.slot}`;
-    if (index === 0) tab.classList.add("on");
+    if (index === active) tab.classList.add("on");
     tab.addEventListener("click", () => {
       const buttons = [...tabs.querySelectorAll("button")];
       const panes = [...root.querySelectorAll<HTMLElement>(".manual-pane")];

@@ -58,7 +58,7 @@ const slides: Slide[] = [
     image: "/tour/manual.png",
     alt: "Manual aberto com os botões do jogador 1.",
     title: "Controles",
-    body: "No computador, jogador 1 e jogador 2 ficam lado a lado. No celular, cada um abre numa aba. O teclado aparece em teclas. O controle desenha o Super Nintendo, com uma linha até a ação no jogo. Na sala, só entra o seu.",
+    body: "Jogador 1 e jogador 2 abrem em abas. O teclado aparece em teclas. O controle desenha o Super Nintendo, com uma linha até a ação no jogo. Na sala, só entra o seu.",
     pins: [
       { x: 34.1, y: 17.6, w: 31.8, h: 64.8, label: "Lista do teclado", color: "b", place: "above" },
       { x: 75.4, y: 56.9, w: 7.1, h: 4.8, label: "Abre aqui", color: "y", place: "right" },

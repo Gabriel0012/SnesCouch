@@ -171,7 +171,26 @@ header .lede { color: #6e7585; margin: 0; }
   background: #050603;
   image-rendering: auto;
 }
-.game strong { display: block; font-weight: 700; }
+.game strong {
+  --title-lines: 2;
+  --title-lh: 1.25;
+  position: relative;
+  display: block;
+  overflow: hidden;
+  font-weight: 700;
+  line-height: var(--title-lh);
+  max-height: calc(var(--title-lh) * var(--title-lines) * 1em);
+  min-height: calc(var(--title-lh) * var(--title-lines) * 1em);
+}
+.game strong.clipped::after {
+  content: "...";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding-left: 0.35rem;
+  background: var(--well);
+  line-height: var(--title-lh);
+}
 .game small { display: block; color: var(--muted); margin-top: 0.25rem; font-size: 13px; }
 
 #stage {
@@ -796,7 +815,7 @@ button[disabled] { cursor: default; }
 }
 #manual[hidden] { display: none; }
 .manual-card {
-  width: min(74rem, 100%);
+  width: min(52rem, 100%);
   max-height: min(88vh, 46rem);
   overflow: auto;
   padding: 0.85rem;
@@ -823,21 +842,30 @@ button[disabled] { cursor: default; }
   color: var(--y);
 }
 .manual-card h3:first-child { margin-top: 0.35rem; }
-.manual-tabs { display: none; gap: 0.4rem; margin: 0.15rem 0 0.75rem; }
+.manual-tabs:not([hidden]) { display: flex; gap: 0.4rem; margin: 0.15rem 0 0.75rem; }
 .manual-tabs[hidden] { display: none !important; }
 .manual-tabs button { flex: 1; }
 #manual-body {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 0.85rem 1.1rem;
   align-items: start;
 }
+#manual-body:not(.solo) .manual-pane.off { display: none; }
 #manual-body.solo { grid-template-columns: 1fr; }
 .manual-note { grid-column: 1 / -1; }
+.manual-keys {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: 1.4rem;
+}
+.manual-keys .keycaps { min-width: 0; }
+.manual-keys .key-action { min-width: 0; }
 .manual-row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  min-width: 0;
   padding: 0.38rem 0;
   border-bottom: 1px solid #2a2e38;
 }
@@ -893,15 +921,17 @@ button[disabled] { cursor: default; }
 .snes-map {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(6.2rem, 1fr) minmax(9rem, 1.15fr) minmax(6.2rem, 1fr);
+  grid-template-columns: minmax(7rem, 1fr) auto minmax(7rem, 1fr);
   grid-template-areas: "left pad right" "bottom bottom bottom";
-  gap: 0.4rem 0.45rem;
+  gap: 0.65rem 1.15rem;
+  padding-top: 0.85rem;
   align-items: stretch;
 }
 .snes-col { display: flex; flex-direction: column; justify-content: center; gap: 0.7rem; min-width: 0; }
 .snes-col.left { grid-area: left; align-items: flex-end; text-align: right; }
 .snes-col.right { grid-area: right; align-items: flex-start; }
-.snes-pad-wrap { grid-area: pad; align-self: center; min-width: 0; }
+.snes-pad-wrap { grid-area: pad; align-self: center; position: relative; width: min(100%, 30rem); }
+.snes-spot { position: absolute; pointer-events: none; }
 .snes-bottom { grid-area: bottom; display: flex; justify-content: space-between; gap: 0.75rem; }
 .snes-pad { display: block; width: 100%; height: auto; }
 .snes-leads { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
@@ -916,23 +946,19 @@ button[disabled] { cursor: default; }
 }
 @keyframes snes-line { to { stroke-dashoffset: 0; } }
 
+@media (max-width: 980px) {
+  .manual-keys { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (max-width: 760px) {
-  .manual-tabs:not([hidden]) { display: flex; }
-  #manual-body { grid-template-columns: 1fr; }
-  #manual-body:not(.solo) .manual-pane.off { display: none; }
+  .manual-keys { grid-template-columns: 1fr; }
   .snes-map {
     grid-template-columns: 1fr 1fr;
     grid-template-areas: "pad pad" "left right" "bottom bottom";
     row-gap: 2.4rem;
+    column-gap: 2.2rem;
   }
   .snes-col.left, .snes-col.right { align-items: flex-start; text-align: left; }
-  .snes-pad-wrap { width: min(100%, 16rem); justify-self: center; }
-}
-@media (min-width: 761px) {
-  #manual-body:not(.solo) .manual-pane + .manual-pane {
-    border-left: 1px solid #2a2e38;
-    padding-left: 1rem;
-  }
+  .snes-pad-wrap { width: min(100%, 26rem); justify-self: center; }
 }
 
 :root { --tick: 33.33ms; }
@@ -1217,14 +1243,7 @@ footer.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; ani
   }
   .game img { width: 100%; height: 8.6rem; }
   .game small { display: none; }
-  .game strong {
-    font-size: 11px;
-    line-height: 1.35;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
+  .game strong { --title-lh: 1.35; font-size: 11px; }
   .game.arrive { animation-name: in-up; }
 
   #viewport {
@@ -1247,7 +1266,7 @@ footer.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; ani
     gap: 0.2rem;
   }
   .game img { height: 4.4rem; }
-  .game strong { font-size: 10px; -webkit-line-clamp: 1; }
+  .game strong { --title-lines: 1; font-size: 10px; min-height: calc(1em * var(--title-lh)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

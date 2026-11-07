@@ -4,7 +4,7 @@ import { startInstall } from "./install.ts";
 import { KEYBOARD_GUIDE, connectedPads, padStatus, readPads, readSupers, setTouchBits } from "./input.ts";
 import { paintManual } from "./manual.ts";
 import { startTouch } from "./touch.ts";
-import { controlGuide, padLabel } from "./pads.ts";
+import { controlGuide, keyboardScheme, padLabel } from "./pads.ts";
 import { games, matchRom, type Game } from "./rom.ts";
 import { OnlineSession, type ChatLine, type Role, type Seat } from "./session.ts";
 import { FIGHTERS, LEFT, RIGHT, SELECT, fighterLabel, superSteps, type Fighter } from "./supers.ts";
@@ -116,6 +116,15 @@ function coverOf(id: string) {
 
 let gamesIntro = true;
 
+function clipTitles() {
+  for (const title of pick.querySelectorAll<HTMLElement>(".game strong")) {
+    title.classList.toggle("clipped", title.scrollHeight > title.clientHeight + 1);
+  }
+}
+
+new ResizeObserver(() => clipTitles()).observe(pick);
+void document.fonts.ready.then(() => clipTitles());
+
 function renderGames() {
   if (pick.childElementCount === games.length) {
     const buttons = pick.querySelectorAll<HTMLButtonElement>(".game");
@@ -126,6 +135,7 @@ function renderGames() {
       const meta = button.querySelector("small");
       if (meta) meta.textContent = `${game.region} · ${ready.has(game.id) ? "ROM neste navegador" : "ROM ainda não gravada"}`;
     });
+    clipTitles();
     return;
   }
   const intro = gamesIntro;
@@ -139,13 +149,14 @@ function renderGames() {
       button.classList.add("arrive");
       button.style.animationDelay = `${index * 50}ms`;
     }
-    button.title = `SHA-1 ${game.sha1}`;
+    button.title = game.title;
     const image = document.createElement("img");
     image.src = coverOf(game.id);
     image.alt = "";
     const text = document.createElement("span");
     const title = document.createElement("strong");
     title.textContent = game.title;
+    title.title = game.title;
     const meta = document.createElement("small");
     meta.textContent = `${game.region} · ${ready.has(game.id) ? "ROM neste navegador" : "ROM ainda não gravada"}`;
     text.append(title, meta);
@@ -159,6 +170,7 @@ function renderGames() {
     });
     pick.append(button);
   });
+  clipTitles();
 }
 
 function updateDrop() {
@@ -524,13 +536,22 @@ function setRoomCode(code: string | null) {
   roomCode.textContent = code ?? "";
 }
 
+let shownPads = "";
+
+function padKey(): string {
+  const [first, second] = connectedPads();
+  const who = session ? `sala:${mySlot()}` : "local";
+  return `${who}:${selected.id}:${first?.id ?? ""}:${second?.id ?? ""}`;
+}
+
 function fillManual() {
+  shownPads = padKey();
   const pads = connectedPads();
   const online = !!session;
   const mine = mySlot();
   const players = online
     ? [{ slot: mine, pad: pads[0], keys: 0 as const }]
-    : ([0, 1] as const).map((index) => ({ slot: index, pad: pads[index], keys: index }));
+    : ([0, 1] as const).map((index) => ({ slot: index, pad: pads[index], keys: keyboardScheme(index, pads) }));
   const note = [selected.title + "."];
   if (online) note.push("Na sala, este manual mostra só o controle desta máquina.");
   if (selected.id === "final-fight-3") {
@@ -549,8 +570,8 @@ function fillManual() {
       slot: player.slot + 1,
       device: player.pad ? padLabel(player.pad) : "Teclado",
       guide: player.pad ? controlGuide(player.pad) : null,
-      keys: KEYBOARD_GUIDE[player.keys],
-      superKey: online || player.keys === 0 ? "F" : ";",
+      keys: KEYBOARD_GUIDE[player.keys ?? 0],
+      superKey: online ? "F" : player.keys === 0 ? "F" : player.keys === 1 ? ";" : null,
     })),
   });
 }
@@ -1335,9 +1356,9 @@ function writePads(p0: number, p1: number) {
   pads[1] = p1;
 }
 
-function pollSupers(padsNow: [number, number]) {
+function pollSupers(padsNow: [number, number], mode: "local" | "online") {
   if (loadedGame?.id !== "final-fight-3" || !worker) return;
-  const [first, second] = readSupers();
+  const [first, second] = readSupers(mode);
   const pressed: [boolean, boolean] = session ? [first, false] : [first, second];
   for (const port of [0, 1] as const) {
     if (padsNow[port] & LEFT) facing[port] = LEFT;
@@ -1359,11 +1380,13 @@ function pollSupers(padsNow: [number, number]) {
 window.addEventListener("blur", () => writePads(0, 0));
 
 function pump() {
-  const padsNow = readPads();
+  const mode = session ? "online" : "local";
+  const padsNow = readPads(mode);
   writePads(padsNow[0], padsNow[1]);
-  pollSupers(padsNow);
+  pollSupers(padsNow, mode);
   if (session) publishProfile();
   renderPeople();
+  if (!manual.hidden && padKey() !== shownPads) fillManual();
   requestAnimationFrame(pump);
 }
 

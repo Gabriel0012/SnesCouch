@@ -299,3 +299,16 @@ export function assignPlayers<T extends { connected?: boolean }>(pads: ReadonlyA
   const connected = pads.filter((pad): pad is T => !!pad && pad.connected !== false);
   return [connected[0] ?? null, connected[1] ?? null];
 }
+
+/**
+ * Keyboard scheme for a local seat.
+ * No pads: seat 0 keeps the arrows, seat 1 keeps IJKL.
+ * One pad: that seat is the pad, and the other seat takes the arrows.
+ * Two pads: neither seat uses a keyboard.
+ */
+export function keyboardScheme(slot: 0 | 1, seats: readonly [unknown, unknown]): 0 | 1 | null {
+  const count = (seats[0] ? 1 : 0) + (seats[1] ? 1 : 0);
+  if (count >= 2) return null;
+  if (count === 0) return slot;
+  return seats[slot] ? null : 0;
+}

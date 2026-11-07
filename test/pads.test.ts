@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assignPlayers, controlGuide, hatBits, padLabel, snesBits, superPressed, type PadLike } from "../apps/web/src/pads.ts";
+import { assignPlayers, controlGuide, hatBits, keyboardScheme, padLabel, snesBits, superPressed, type PadLike } from "../apps/web/src/pads.ts";
 
 const B = 1 << 0;
 const Y = 1 << 1;
@@ -157,6 +157,13 @@ test("o manual do Xbox e do PS4 aponta o botão certo", () => {
   assert.equal(ps4Guide.find((row) => row.button === "X")?.does, "B");
   assert.equal(ps4Guide.find((row) => row.button === "R2")?.does, "Super");
   assert.equal(ps4Guide.find((row) => row.button === "Quadrado")?.does, "Y");
+});
+
+test("um controle passa as setas para o jogador 2", () => {
+  const padSeat = {};
+  assert.deepEqual([keyboardScheme(0, [null, null]), keyboardScheme(1, [null, null])], [0, 1]);
+  assert.deepEqual([keyboardScheme(0, [padSeat, null]), keyboardScheme(1, [padSeat, null])], [null, 0]);
+  assert.deepEqual([keyboardScheme(0, [padSeat, padSeat]), keyboardScheme(1, [padSeat, padSeat])], [null, null]);
 });
 
 test("dois controles ocupam jogador 1 e jogador 2, pulando buraco", () => {
