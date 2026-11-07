@@ -26,6 +26,13 @@ test("o teclado do Final Fight 3 mostra a ação e esconde o que o jogo não usa
   assert.equal(rows.find((row) => row.keys[0]?.label === "Enter")?.action, "Abre a conversa");
 });
 
+test("King of Dragons usa a arma no Y e a magia no X", () => {
+  assert.equal(actionFor("king-of-dragons", "Y"), "Arma");
+  assert.equal(actionFor("king-of-dragons", "X"), "Magia");
+  assert.equal(actionFor("king-of-dragons", "B"), "Pulo");
+  assert.equal(actionFor("king-of-dragons", "Super"), null);
+});
+
 test("Pocky & Rocky 2 não lista o Super", () => {
   assert.equal(actionFor("pocky-rocky-2", "Super"), null);
   assert.equal(keyboardRows(keys, "pocky-rocky-2").some((row) => row.action === "Super"), false);

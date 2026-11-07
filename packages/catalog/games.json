@@ -23,6 +23,14 @@
       "sha1": "82fbe365bc96fe3f03c3eb12e1620910b15f01f9",
       "bytes": 1572864,
       "players": 2
+    },
+    {
+      "id": "king-of-dragons",
+      "title": "King of Dragons",
+      "region": "USA",
+      "sha1": "792355fb2ce50496b84760e3833662ca1c63cfc5",
+      "bytes": 2097152,
+      "players": 2
     }
   ]
 }

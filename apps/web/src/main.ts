@@ -110,7 +110,7 @@ function setDelay(text: string) {
 }
 
 function coverOf(id: string) {
-  if (id === "final-fight-3" || id === "pocky-rocky-2" || id === "mighty-morphin-power-rangers-the-movie") return `/covers/${id}.jpg`;
+  if (id === "final-fight-3" || id === "pocky-rocky-2" || id === "mighty-morphin-power-rangers-the-movie" || id === "king-of-dragons") return `/covers/${id}.jpg`;
   return `/covers/${id}.svg`;
 }
 
@@ -535,6 +535,9 @@ function fillManual() {
   if (online) note.push("Na sala, este manual mostra só o controle desta máquina.");
   if (selected.id === "final-fight-3") {
     note.push("Select junto com o Super troca Haggar e Guy, Lucia ou Dean. Haggar, Guy e Dean precisam estar segurando o inimigo.");
+  }
+  if (selected.id === "king-of-dragons") {
+    note.push("A magia do X gasta vida. O escudo no A só entra se for ligado no Option Mode.");
   }
   paintManual({
     root: manualBody,

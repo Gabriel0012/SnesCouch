@@ -65,6 +65,17 @@ const BY_GAME: Record<string, Record<string, string>> = {
     Select: "Menu",
     Start: "Pausa",
   },
+  "king-of-dragons": {
+    Direções: "Andar",
+    Y: "Arma",
+    B: "Pulo",
+    X: "Magia",
+    A: "Escudo",
+    L: "Sem uso",
+    R: "Sem uso",
+    Select: "Sem uso",
+    Start: "Pausa",
+  },
 };
 
 const TO_SPOT: Record<string, SpotId> = {
