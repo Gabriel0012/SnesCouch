@@ -3,9 +3,12 @@ import { proxyAvatar } from "./avatar";
 import type { Env } from "./env";
 import {
   acceptFriend,
+  answerInvite,
   clearOpenRoom,
   declineFriend,
+  inviteToRoom,
   listFriends,
+  listInvites,
   removeFriend,
   requestFriend,
   setOpenRoom,
@@ -45,6 +48,7 @@ export async function routeAccount(request: Request, env: Env): Promise<Response
   const account = path.startsWith("/api/auth")
     || path.startsWith("/api/saves")
     || path.startsWith("/api/friends")
+    || path.startsWith("/api/invites")
     || path.startsWith("/api/avatars/")
     || path === "/api/me"
     || path.startsWith("/api/me/")
@@ -131,6 +135,26 @@ export async function routeAccount(request: Request, env: Env): Promise<Response
     const user = await requireUser(request, env);
     if (user instanceof Response) return user;
     return requestFriend(request, env, user);
+  }
+
+  if (path === "/api/invites" && request.method === "GET") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    return listInvites(env, user);
+  }
+
+  const inviteAnswer = path.match(/^\/api\/invites\/([a-f0-9]{32})\/(accept|decline)$/);
+  if (inviteAnswer && request.method === "POST") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    return answerInvite(env, user, inviteAnswer[1], inviteAnswer[2] === "accept");
+  }
+
+  const call = path.match(/^\/api\/friends\/([0-9a-f-]+)\/invite$/);
+  if (call && request.method === "POST" && UUID.test(call[1])) {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    return inviteToRoom(env, user, call[1]);
   }
 
   const friend = path.match(/^\/api\/friends\/([0-9a-f-]+)\/(accept|decline)$/);

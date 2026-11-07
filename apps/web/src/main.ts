@@ -1,20 +1,25 @@
 import {
   acceptFriend,
+  acceptInvite,
   AccountError,
   askFriend,
   cloudSaves,
   declineFriend,
+  declineInvite,
   downloadSave,
   downloadShot,
   fetchAccount,
+  inviteFriend,
   listCloud,
   loadFriends,
+  loadInvites,
   logoutAccount,
   publishOpenRoom,
   removeFriend,
   uploadSave,
   type AccountUser,
   type FriendCard,
+  type RoomInvite,
 } from "./account.ts";
 import { Speaker } from "./audio.ts";
 import { kindFromLabel, padIcon } from "./icons.ts";
@@ -108,8 +113,10 @@ const localChecks = new Map<number, number>();
 const remoteChecks = new Map<number, number>();
 let checkpointWait: ((snapshot: { frame: number; state: Uint8Array; delay: number }) => void) | null = null;
 let saveWait: ((saved: { state: Uint8Array; shot: Uint8Array | null }) => void) | null = null;
-type AlertMode = "forget" | "reset-local" | "reset-ask" | "reset-wait" | "reset-in";
+type AlertMode = "forget" | "reset-local" | "reset-ask" | "reset-wait" | "reset-in" | "invite";
 let alertMode: AlertMode | null = null;
+let shownInvite: RoomInvite | null = null;
+let inviteTimer = 0;
 let nick = "";
 let account: AccountUser | null = null;
 let hostedCode: string | null = null;
@@ -951,7 +958,7 @@ async function connect(role: Role, code: string) {
       kickReset(net);
     },
     onResetAsk: (name) => {
-      if (session !== mine || alertMode === "forget" || saveDialog) {
+      if (session !== mine || alertMode === "forget" || alertMode === "invite" || saveDialog) {
         mine.answerReset(false);
         return;
       }
@@ -1157,6 +1164,7 @@ function paintAccount() {
   peopleKey = "";
   renderPeople();
   if (session) publishProfile();
+  watchInvites();
 }
 
 async function refreshAccount() {
@@ -1214,6 +1222,11 @@ function friendCard(friend: FriendCard, pending: "in" | "out" | null) {
     cancel.addEventListener("click", () => void changeFriend(() => removeFriend(friend.id), "Pedido cancelado."));
     actions.append(cancel);
   } else {
+    const call = document.createElement("button");
+    call.type = "button";
+    call.textContent = "Convidar";
+    call.addEventListener("click", () => void callFriend(friend));
+    actions.append(call);
     if (friend.roomCode) {
       const join = document.createElement("button");
       join.type = "button";
@@ -1229,6 +1242,60 @@ function friendCard(friend: FriendCard, pending: "in" | "out" | null) {
   }
   card.append(who, actions);
   return card;
+}
+
+async function callFriend(friend: FriendCard) {
+  if (!hostedCode) {
+    setBanner("Crie a sala antes de chamar alguém.");
+    return;
+  }
+  try {
+    await roomChain;
+    if (!hostedCode) {
+      setBanner("Crie a sala antes de chamar alguém.");
+      return;
+    }
+    await inviteFriend(friend.id);
+    setBanner(`Convite enviado para ${friend.name}.`);
+  } catch (error) {
+    if (error instanceof AccountError && error.status === 401) {
+      account = null;
+      paintAccount();
+    }
+    setBanner(error instanceof Error ? error.message : "Não deu para chamar.");
+  }
+}
+
+function watchInvites() {
+  window.clearInterval(inviteTimer);
+  inviteTimer = 0;
+  if (!account) return;
+  inviteTimer = window.setInterval(() => void pullInvites(), 3000);
+  void pullInvites();
+}
+
+async function pullInvites() {
+  if (!account || document.visibilityState === "hidden") return;
+  let invites: RoomInvite[];
+  try {
+    invites = await loadInvites();
+  } catch (error) {
+    if (error instanceof AccountError && error.status === 401) {
+      account = null;
+      paintAccount();
+    }
+    return;
+  }
+  const open = invites.filter((item) => !(session && roomCode.textContent === item.roomCode));
+  for (const item of invites) {
+    if (session && roomCode.textContent === item.roomCode) void declineInvite(item.id).catch(() => undefined);
+  }
+  if (alertMode === "invite" && shownInvite && !open.some((item) => item.id === shownInvite?.id)) closeAlert();
+  if (alertMode || saveDialog) return;
+  const next = open[0];
+  if (!next) return;
+  shownInvite = next;
+  openAlert("invite", next.fromName);
 }
 
 async function changeFriend(action: () => Promise<void>, done: string) {
@@ -1323,7 +1390,9 @@ friendForm.addEventListener("submit", (event) => {
 });
 
 window.addEventListener("focus", () => {
-  if (account) void paintFriends();
+  if (!account) return;
+  void paintFriends();
+  void pullInvites();
 });
 
 drop.addEventListener("dragover", (event) => event.preventDefault());
@@ -1615,6 +1684,9 @@ function openAlert(mode: AlertMode, name = "") {
     alertYes.textContent = "Reiniciar";
   } else if (mode === "reset-wait") {
     alertText.textContent = "Esperando o outro jogador confirmar o reinício.";
+  } else if (mode === "invite") {
+    alertText.textContent = `${name} te chamou para a sala. Confirme para entrar direto.`;
+    alertYes.textContent = "Confirmar";
   } else {
     alertText.textContent = `${name} quer reiniciar o jogo. Confirme para os dois voltarem ao começo juntos.`;
     alertYes.textContent = "Confirmar";
@@ -1625,15 +1697,18 @@ function openAlert(mode: AlertMode, name = "") {
 
 function closeAlert() {
   alertMode = null;
+  shownInvite = null;
   alertYes.hidden = false;
   conceal(alertBox, "modal");
 }
 
 function dismissAlert() {
   const mode = alertMode;
+  const invite = shownInvite;
   if (mode === "reset-wait") session?.cancelReset();
   if (mode === "reset-in") session?.answerReset(false);
   if (mode === "reset-wait" || mode === "reset-in") setBanner("Reinício cancelado.");
+  if (mode === "invite" && invite) void declineInvite(invite.id).catch(() => undefined);
   closeAlert();
 }
 
@@ -1687,6 +1762,24 @@ alertYes.addEventListener("click", () => {
     session?.answerReset(true);
     if (host) closeAlert();
     else openAlert("reset-wait");
+    return;
+  }
+  if (mode === "invite") {
+    const invite = shownInvite;
+    closeAlert();
+    if (!invite) return;
+    void (async () => {
+      try {
+        const code = await acceptInvite(invite.id);
+        joinCode(code);
+      } catch (error) {
+        if (error instanceof AccountError && error.status === 401) {
+          account = null;
+          paintAccount();
+        }
+        setBanner(error instanceof Error ? error.message : "Não deu para entrar na sala.");
+      }
+    })();
   }
 });
 

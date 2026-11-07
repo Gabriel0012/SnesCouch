@@ -32,4 +32,12 @@ CREATE TABLE IF NOT EXISTS friendships (
   PRIMARY KEY (from_id, to_id)
 );
 CREATE INDEX IF NOT EXISTS friendships_to ON friendships (to_id);
+CREATE TABLE IF NOT EXISTS room_invites (
+  id TEXT PRIMARY KEY,
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  room_code TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS room_invites_to ON room_invites (to_id);
 `;

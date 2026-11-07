@@ -171,6 +171,41 @@ export async function removeFriend(id: string): Promise<void> {
   if (!response.ok) await fail(response);
 }
 
+export interface RoomInvite {
+  id: string;
+  fromId: string;
+  fromName: string;
+  roomCode: string;
+}
+
+export async function inviteFriend(id: string): Promise<void> {
+  const response = await fetch(`/api/friends/${id}/invite`, { method: "POST" });
+  if (!response.ok) await fail(response);
+}
+
+export async function loadInvites(): Promise<RoomInvite[]> {
+  const response = await fetch("/api/invites");
+  if (!response.ok) await fail(response);
+  const body = await response.json() as { invites?: Partial<RoomInvite>[] };
+  return (body.invites ?? []).flatMap((item) => {
+    if (typeof item.id !== "string" || typeof item.fromId !== "string" || typeof item.fromName !== "string" || typeof item.roomCode !== "string") return [];
+    return [{ id: item.id, fromId: item.fromId, fromName: item.fromName, roomCode: item.roomCode }];
+  });
+}
+
+export async function acceptInvite(id: string): Promise<string> {
+  const response = await fetch(`/api/invites/${id}/accept`, { method: "POST" });
+  if (!response.ok) await fail(response);
+  const body = await response.json() as { roomCode?: unknown };
+  if (typeof body.roomCode !== "string") throw new AccountError("Esse convite já saiu.", 404);
+  return body.roomCode;
+}
+
+export async function declineInvite(id: string): Promise<void> {
+  const response = await fetch(`/api/invites/${id}/decline`, { method: "POST" });
+  if (!response.ok) await fail(response);
+}
+
 export async function publishOpenRoom(code: string | null): Promise<void> {
   const response = code
     ? await fetch("/api/me/room", {

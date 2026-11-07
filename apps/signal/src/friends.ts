@@ -1,9 +1,10 @@
-import { FRIEND_CODE, ROOM_CODE } from "./codes";
+import { FRIEND_CODE, ROOM_CODE, randomHex } from "./codes";
 import type { Env } from "./env";
 import { json, problem } from "./http";
 import type { UserRow } from "./users";
 
 const ROOM_TTL = 8 * 60 * 60 * 1000;
+const INVITE_TTL = 3 * 60 * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 interface LinkRow {
@@ -141,7 +142,75 @@ export async function setOpenRoom(request: Request, env: Env, user: UserRow): Pr
 
 export async function clearOpenRoom(env: Env, user: UserRow): Promise<Response> {
   await env.DB.prepare("UPDATE users SET room_code = NULL, room_at = NULL WHERE id = ?").bind(user.id).run();
+  await env.DB.prepare("DELETE FROM room_invites WHERE from_id = ?").bind(user.id).run();
   return json({ ok: true });
+}
+
+async function acceptedFriend(env: Env, userId: string, otherId: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT status FROM friendships
+     WHERE status = 'accepted' AND ((from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?))`,
+  ).bind(userId, otherId, otherId, userId).first();
+  return Boolean(row);
+}
+
+export async function inviteToRoom(env: Env, user: UserRow, otherId: string): Promise<Response> {
+  if (!UUID.test(otherId) || otherId === user.id) return problem("Amigo inválido.", 400);
+  const room = liveRoom(user.room_code, user.room_at);
+  if (!room) return problem("Crie a sala antes de chamar alguém.", 409);
+  if (!await acceptedFriend(env, user.id, otherId)) return problem("Essa pessoa não está na sua lista.", 404);
+  const now = Date.now();
+  await env.DB.prepare("DELETE FROM room_invites WHERE from_id = ? AND to_id = ?").bind(user.id, otherId).run();
+  await env.DB.prepare(
+    "INSERT INTO room_invites (id, from_id, to_id, room_code, created_at) VALUES (?, ?, ?, ?, ?)",
+  ).bind(randomHex(16), user.id, otherId, room, now).run();
+  return json({ ok: true }, 201);
+}
+
+interface InviteRow {
+  id: string;
+  room_code: string;
+  created_at: number;
+  from_id: string;
+  from_name: string;
+  host_room: string | null;
+  host_at: number | null;
+}
+
+export async function listInvites(env: Env, user: UserRow): Promise<Response> {
+  const now = Date.now();
+  await env.DB.prepare("DELETE FROM room_invites WHERE created_at < ?").bind(now - INVITE_TTL).run();
+  const rows = await env.DB.prepare(
+    `SELECT i.id AS id, i.room_code AS room_code, i.created_at AS created_at,
+            u.id AS from_id, u.name AS from_name, u.room_code AS host_room, u.room_at AS host_at
+     FROM room_invites i
+     JOIN users u ON u.id = i.from_id
+     WHERE i.to_id = ?
+     ORDER BY i.created_at DESC`,
+  ).bind(user.id).all<InviteRow>();
+  const invites = [];
+  for (const row of rows.results ?? []) {
+    if (liveRoom(row.host_room, row.host_at) !== row.room_code) {
+      await env.DB.prepare("DELETE FROM room_invites WHERE id = ?").bind(row.id).run();
+      continue;
+    }
+    invites.push({ id: row.id, fromId: row.from_id, fromName: row.from_name, roomCode: row.room_code });
+  }
+  return json({ invites });
+}
+
+export async function answerInvite(env: Env, user: UserRow, inviteId: string, accept: boolean): Promise<Response> {
+  if (!/^[a-f0-9]{32}$/.test(inviteId)) return problem("Convite inválido.", 400);
+  const row = await env.DB.prepare(
+    "SELECT id, room_code, created_at FROM room_invites WHERE id = ? AND to_id = ?",
+  ).bind(inviteId, user.id).first<{ id: string; room_code: string; created_at: number }>();
+  if (!row || Date.now() - row.created_at > INVITE_TTL) {
+    if (row) await env.DB.prepare("DELETE FROM room_invites WHERE id = ?").bind(row.id).run();
+    return problem("Esse convite já saiu.", 404);
+  }
+  await env.DB.prepare("DELETE FROM room_invites WHERE id = ?").bind(row.id).run();
+  if (!accept) return json({ ok: true });
+  return json({ roomCode: row.room_code });
 }
 
 export async function sharesAvatar(env: Env, user: UserRow, otherId: string): Promise<boolean> {
