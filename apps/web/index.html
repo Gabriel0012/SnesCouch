@@ -2,15 +2,21 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#12141a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
     <title>SNES Couch</title>
     <link rel="icon" type="image/png" href="/favicon.png" sizes="512x512" />
+    <link rel="apple-touch-icon" href="/favicon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <header class="arrive">
       <p class="mark">SNES Couch</p>
       <p class="lede">A ROM abre neste navegador e fica gravada aqui. Nada é enviado.</p>
+      <button id="install" type="button" hidden>Instalar</button>
     </header>
     <div id="banner" role="status" hidden>
       <span id="banner-text"></span>
@@ -71,6 +77,27 @@
         <div class="saves-line arrive">
           <span class="saves-label">Saves</span>
           <div id="saves" class="saves"></div>
+        </div>
+        <div id="touch" hidden>
+          <button id="touch-exit" type="button" tabindex="-1">Sair</button>
+          <button type="button" class="shoulder left" data-bit="l" tabindex="-1">L</button>
+          <button type="button" class="shoulder right" data-bit="r" tabindex="-1">R</button>
+          <div id="dpad" role="group" aria-label="Direcional">
+            <i class="arrow up"></i>
+            <i class="arrow right"></i>
+            <i class="arrow down"></i>
+            <i class="arrow left"></i>
+          </div>
+          <div class="menu-pad">
+            <button type="button" data-bit="select" tabindex="-1">Select</button>
+            <button type="button" data-bit="start" tabindex="-1">Start</button>
+          </div>
+          <div class="face" role="group" aria-label="Botões">
+            <button type="button" data-bit="x" tabindex="-1">X</button>
+            <button type="button" data-bit="y" tabindex="-1">Y</button>
+            <button type="button" data-bit="a" tabindex="-1">A</button>
+            <button type="button" data-bit="b" tabindex="-1">B</button>
+          </div>
         </div>
       </section>
       <aside id="panel" class="arrive">

@@ -27,6 +27,11 @@ const PLAYER_KEYS = [
 ] as const;
 
 const down = new Set<string>();
+let touchBits = 0;
+
+export function setTouchBits(bits: number) {
+  touchBits = bits & 0xfff;
+}
 
 function typing(target: EventTarget | null): boolean {
   const tour = document.querySelector("#tour");
@@ -42,7 +47,10 @@ window.addEventListener("keydown", (event) => {
   if (event.code.startsWith("Arrow") || event.code === "Space") event.preventDefault();
 });
 window.addEventListener("keyup", (event) => down.delete(event.code));
-window.addEventListener("blur", () => down.clear());
+window.addEventListener("blur", () => {
+  down.clear();
+  touchBits = 0;
+});
 
 function fromKeys(map: Record<string, number>): number {
   let bits = 0;
@@ -70,7 +78,7 @@ export function readPads(): [number, number] {
   if (!document.hasFocus()) return [0, 0];
   const [first, second] = livePads();
   const keys: [number, number] = typing(document.activeElement) ? [0, 0] : [fromKeys(PLAYER_KEYS[0]), fromKeys(PLAYER_KEYS[1])];
-  return [keys[0] | snesBits(first), keys[1] | snesBits(second)];
+  return [keys[0] | snesBits(first) | touchBits, keys[1] | snesBits(second)];
 }
 
 export function padStatus(): [string | null, string | null] {

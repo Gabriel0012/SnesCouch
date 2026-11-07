@@ -1,6 +1,8 @@
 import { Speaker } from "./audio.ts";
 import { kindFromLabel, padIcon } from "./icons.ts";
-import { KEYBOARD_GUIDE, connectedPads, padStatus, readPads, readSupers } from "./input.ts";
+import { startInstall } from "./install.ts";
+import { KEYBOARD_GUIDE, connectedPads, padStatus, readPads, readSupers, setTouchBits } from "./input.ts";
+import { startTouch } from "./touch.ts";
 import { controlGuide, padLabel } from "./pads.ts";
 import { games, matchRom, type Game } from "./rom.ts";
 import { OnlineSession, type ChatLine, type Role, type Seat } from "./session.ts";
@@ -994,9 +996,52 @@ volSlider.addEventListener("input", () => {
   paintVolume();
 });
 
+function coarsePointer(): boolean {
+  return window.matchMedia("(pointer: coarse)").matches;
+}
+
+function unlockOrientation() {
+  try {
+    window.screen.orientation?.unlock();
+  } catch {
+    /* already free, or the browser has no lock */
+  }
+}
+
+async function enterFullscreen() {
+  if (document.fullscreenElement) return;
+  await stage.requestFullscreen();
+  if (!coarsePointer()) return;
+  const orientation = window.screen.orientation as ScreenOrientation & { lock?: (kind: "landscape") => Promise<void> };
+  if (!orientation?.lock) return;
+  try {
+    await orientation.lock("landscape");
+  } catch {
+    /* iOS and desktop ignore the lock */
+  }
+}
+
+async function leaveFullscreen() {
+  unlockOrientation();
+  if (document.fullscreenElement) await document.exitFullscreen();
+}
+
 document.querySelector("#fullscreen")!.addEventListener("click", () => {
-  if (document.fullscreenElement) void document.exitFullscreen();
-  else void stage.requestFullscreen();
+  if (document.fullscreenElement) void leaveFullscreen();
+  else void enterFullscreen();
+});
+
+document.addEventListener("fullscreenchange", () => {
+  stage.classList.toggle("play-full", document.fullscreenElement === stage && coarsePointer());
+  if (!document.fullscreenElement) unlockOrientation();
+});
+
+startInstall(document.querySelector<HTMLButtonElement>("#install")!);
+startTouch({
+  stage,
+  overlay: document.querySelector<HTMLElement>("#touch")!,
+  setBits: setTouchBits,
+  onExit: () => void leaveFullscreen(),
 });
 
 document.querySelector("#forget")!.addEventListener("click", () => {
