@@ -3,19 +3,6 @@ import { extraKeys, keyboardRows, spotsFor, type GuideLike, type KeyFace, type S
 
 const SVG = "http://www.w3.org/2000/svg";
 
-const PAINT: Record<SpotId, string> = {
-  b: "#f5c518",
-  a: "#ff6b62",
-  y: "#3dce74",
-  x: "#8eb0ff",
-  l: "#f6f3ea",
-  r: "#f6f3ea",
-  dpad: "#f6f3ea",
-  select: "#f6f3ea",
-  start: "#f6f3ea",
-  super: "#f6f3ea",
-};
-
 const LEFT: SpotId[] = ["l", "y", "dpad"];
 const RIGHT: SpotId[] = ["r", "x", "a", "b"];
 
@@ -37,6 +24,14 @@ export interface ManualPlayer {
 }
 
 let watch: ResizeObserver | null = null;
+let scheme: MediaQueryList | null = null;
+let redrawLeads: (() => void) | null = null;
+
+function leadPaint(label: HTMLElement): string {
+  const root = getComputedStyle(document.documentElement);
+  if (label.classList.contains("idle")) return root.getPropertyValue("--dot").trim() || "#8b93a3";
+  return getComputedStyle(label).color;
+}
 
 function svgEl<K extends keyof SVGElementTagNameMap>(name: K, attrs: Record<string, string | number>): SVGElementTagNameMap[K] {
   const node = document.createElementNS(SVG, name);
@@ -71,7 +66,6 @@ function callout(spot: Spot, where: "left" | "right" | "bottom"): HTMLElement {
   const item = document.createElement("p");
   item.className = `snes-call ${spot.id}${spot.idle ? " idle" : ""}`;
   item.dataset.spot = spot.id;
-  item.dataset.paint = spot.idle ? "#8b93a3" : PAINT[spot.id];
   if (where === "bottom") item.classList.add(where);
   const action = document.createElement("span");
   action.textContent = spot.action;
@@ -223,7 +217,7 @@ function drawLeads(map: HTMLElement) {
     const path = svgEl("path", {
       d: route(boxOf(button, origin), call.box, padBox, channel, dropped),
       fill: "none",
-      stroke: label.dataset.paint ?? "#f6f3ea",
+      stroke: leadPaint(label),
       "stroke-width": 2,
       "stroke-linejoin": "miter",
       "stroke-linecap": "square",
@@ -237,7 +231,7 @@ function drawLeads(map: HTMLElement) {
     }
     const from = boxOf(button, origin);
     leads.append(svgEl("circle", {
-      cx: from.cx, cy: from.cy, r: 3.5, fill: label.dataset.paint ?? "#f6f3ea",
+      cx: from.cx, cy: from.cy, r: 3.5, fill: leadPaint(label),
     }));
   }
   map.dataset.drew = "1";
@@ -245,9 +239,14 @@ function drawLeads(map: HTMLElement) {
 
 function track(maps: HTMLElement[]) {
   watch?.disconnect();
-  watch = new ResizeObserver(() => {
+  if (scheme && redrawLeads) scheme.removeEventListener("change", redrawLeads);
+  const redraw = () => {
     for (const map of maps) drawLeads(map);
-  });
+  };
+  watch = new ResizeObserver(redraw);
+  redrawLeads = redraw;
+  scheme = window.matchMedia("(prefers-color-scheme: light)");
+  scheme.addEventListener("change", redraw);
   for (const map of maps) {
     watch.observe(map);
     drawLeads(map);
