@@ -93,7 +93,7 @@ function setDelay(text: string) {
 }
 
 function coverOf(id: string) {
-  if (id === "final-fight-3" || id === "pocky-rocky-2") return `/covers/${id}.jpg`;
+  if (id === "final-fight-3" || id === "pocky-rocky-2" || id === "mighty-morphin-power-rangers-the-movie") return `/covers/${id}.jpg`;
   return `/covers/${id}.svg`;
 }
 
