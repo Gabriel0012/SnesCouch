@@ -1,0 +1,5 @@
+# TURN opcional, para quem está atrás de CGNAT.
+# Sem isso, a sala ainda tenta ligação direta e STUN.
+TURN_URL=
+TURN_USERNAME=
+TURN_CREDENTIAL=

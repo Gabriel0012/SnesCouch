@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.wrangler/
+core/third_party/
+core/build/
+local-roms/
+.dev.vars
+*.log
+test/debug-core.mjs

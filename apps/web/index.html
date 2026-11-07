@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SNES Couch</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header>
+      <p class="mark">SNES Couch</p>
+      <p class="lede">A ROM abre neste navegador e fica gravada aqui. Nada é enviado.</p>
+    </header>
+    <div id="banner" role="status" hidden>
+      <span id="banner-text"></span>
+      <button id="banner-close" type="button" aria-label="Fechar">×</button>
+    </div>
+    <div class="shell">
+      <nav id="pick" aria-label="Jogos"></nav>
+      <section id="stage" aria-label="Tela">
+        <div id="viewport">
+          <label id="drop" class="drop">
+            Solte a ROM aqui
+            <small>O arquivo fica neste navegador. Só entra se o SHA-1 for o da versão USA.</small>
+            <input id="file" type="file" accept=".sfc,.smc,application/octet-stream" hidden />
+          </label>
+          <canvas id="screen" width="256" height="224" hidden></canvas>
+        </div>
+        <div class="toolbar">
+          <div class="cluster" role="group" aria-label="Tamanho da tela">
+            <button type="button" data-zoom="fit" class="on">Ajustar</button>
+            <button type="button" data-zoom="2">2×</button>
+            <button type="button" data-zoom="3">3×</button>
+            <button type="button" data-zoom="4">4×</button>
+            <button id="fullscreen" type="button">Tela cheia</button>
+          </div>
+          <div class="volume">
+            <button id="vol" type="button" aria-pressed="false" aria-label="Silenciar">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path class="speaker" d="M4 9h3.2L12 5.2v13.6L7.2 15H4z" />
+                <path class="wave" d="M15.2 9.2a4 4 0 0 1 0 5.6" />
+                <path class="wave far" d="M17.6 6.8a7.2 7.2 0 0 1 0 10.4" />
+                <path class="cross" d="M16 9.5l5 5M21 9.5l-5 5" />
+              </svg>
+            </button>
+            <div class="volume-pop">
+              <input id="vol-slider" type="range" min="0" max="100" value="100" aria-label="Volume do jogo" />
+              <span id="vol-readout">100%</span>
+            </div>
+          </div>
+          <span class="toolbar-gap"></span>
+          <div class="cluster quiet" role="group" aria-label="Partida">
+            <button id="reset" type="button">Reiniciar</button>
+            <button id="forget" type="button">Esquecer ROM</button>
+          </div>
+        </div>
+        <div class="saves-line">
+          <span class="saves-label">Saves</span>
+          <div id="saves" class="saves"></div>
+        </div>
+      </section>
+      <aside id="panel">
+        <section>
+          <h2>Sala</h2>
+          <label class="nick">Seu nome
+            <input id="nick" maxlength="20" autocomplete="nickname" spellcheck="false" placeholder="Nome na sala" />
+          </label>
+          <p id="room-state">Partida local. A sala leva o outro controle para outra casa.</p>
+          <div class="row">
+            <button id="create" type="button">Criar sala</button>
+            <div class="codebox">
+              <input id="code" maxlength="5" autocomplete="off" spellcheck="false" placeholder="Código" />
+              <button id="copy" type="button">Copiar</button>
+            </div>
+            <button id="join" type="button">Entrar</button>
+          </div>
+          <p id="delay"></p>
+        </section>
+        <section>
+          <h2>Jogadores</h2>
+          <ul id="players" class="people"></ul>
+        </section>
+        <section class="chat">
+          <h2>Conversa</h2>
+          <div id="log" aria-live="polite"></div>
+          <form id="chat" class="row">
+            <input id="chat-text" maxlength="200" placeholder="A conversa abre na sala" disabled />
+            <button type="submit" disabled>Enviar</button>
+          </form>
+        </section>
+        <details>
+          <summary>Teclado</summary>
+          <ul class="keys">
+            <li><b>Jogador 1</b> setas, Z B, X Y, A A, S X, Q L, W R, Enter Start, Shift esquerdo Select</li>
+            <li><b>Jogador 2</b> I J K L, N B, M Y, G A, H X, U L, O R, P Start, V Select</li>
+          </ul>
+          <p class="note">Xbox, PS4, PS5, Super Nintendo, fliperama e USB genérico também entram. O de baixo é o B. No online, cada pessoa usa o próprio controle.</p>
+        </details>
+      </aside>
+    </div>
+    <footer>
+      Projeto de fã, sem vínculo com a Nintendo. Super Nintendo Entertainment System é marca da Nintendo.
+      O núcleo é o Snes9x, só para uso pessoal e não comercial.
+    </footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
