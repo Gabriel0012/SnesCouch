@@ -29,6 +29,8 @@ const PLAYER_KEYS = [
 const down = new Set<string>();
 
 function typing(target: EventTarget | null): boolean {
+  const tour = document.querySelector("#tour");
+  if (tour instanceof HTMLElement && !tour.hidden) return true;
   const manual = document.querySelector("#manual");
   if (manual instanceof HTMLElement && !manual.hidden) return true;
   return target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);

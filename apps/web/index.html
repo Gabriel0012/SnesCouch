@@ -4,10 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SNES Couch</title>
+    <link rel="icon" type="image/png" href="/favicon.png" sizes="512x512" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <header>
+    <header class="arrive">
       <p class="mark">SNES Couch</p>
       <p class="lede">A ROM abre neste navegador e fica gravada aqui. Nada é enviado.</p>
     </header>
@@ -18,7 +19,7 @@
     <div class="shell">
       <nav id="pick" aria-label="Jogos"></nav>
       <section id="stage" aria-label="Tela">
-        <div id="viewport">
+        <div id="viewport" class="arrive">
           <label id="drop" class="drop">
             Solte a ROM aqui
             <small>O arquivo fica neste navegador. Só entra se o SHA-1 for o da versão USA.</small>
@@ -39,7 +40,7 @@
             </div>
           </div>
         </div>
-        <div class="toolbar">
+        <div class="toolbar arrive">
           <div class="cluster" role="group" aria-label="Tamanho da tela">
             <button type="button" data-zoom="fit" class="on">Ajustar</button>
             <button type="button" data-zoom="2">2×</button>
@@ -67,12 +68,12 @@
             <button id="forget" type="button">Esquecer ROM</button>
           </div>
         </div>
-        <div class="saves-line">
+        <div class="saves-line arrive">
           <span class="saves-label">Saves</span>
           <div id="saves" class="saves"></div>
         </div>
       </section>
-      <aside id="panel">
+      <aside id="panel" class="arrive">
         <section>
           <div class="room-head">
             <h2>
@@ -119,10 +120,32 @@
         <div id="manual-body"></div>
       </div>
     </div>
-    <footer>
+    <footer class="arrive">
       Projeto de fã, sem vínculo com a Nintendo. Super Nintendo Entertainment System é marca da Nintendo.
       O núcleo é o Snes9x, só para uso pessoal e não comercial.
     </footer>
+    <div id="tour" hidden>
+      <div class="tour-sheet" role="dialog" aria-modal="true" aria-labelledby="tour-title">
+        <div class="tour-top">
+          <p class="tour-kicker">Como usar</p>
+          <span class="toolbar-gap"></span>
+          <div id="tour-pips" class="tour-pips"></div>
+          <p id="tour-count">1 / 5</p>
+        </div>
+        <div id="tour-frame" class="tour-shot">
+          <img id="tour-shot" alt="" draggable="false" />
+          <div id="tour-marks"></div>
+        </div>
+        <h2 id="tour-title"></h2>
+        <p id="tour-copy"></p>
+        <div class="tour-nav">
+          <button id="tour-back" type="button">Voltar</button>
+          <span class="toolbar-gap"></span>
+          <button id="tour-skip" type="button">Pular</button>
+          <button id="tour-next" type="button">Próximo</button>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

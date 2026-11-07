@@ -5,7 +5,9 @@ import { controlGuide, padLabel } from "./pads.ts";
 import { games, matchRom, type Game } from "./rom.ts";
 import { OnlineSession, type ChatLine, type Role, type Seat } from "./session.ts";
 import { FIGHTERS, LEFT, RIGHT, SELECT, fighterLabel, superSteps, type Fighter } from "./supers.ts";
+import { conceal, reveal, shown } from "./motion.ts";
 import { forgetRom, lastGame, loadRom, loadState, playerName, saveList, saveRom, saveSlots, saveState, setPlayerName, storedGames } from "./store.ts";
+import { startTour } from "./tour.ts";
 
 const pick = document.querySelector<HTMLElement>("#pick")!;
 const stage = document.querySelector<HTMLElement>("#stage")!;
@@ -70,9 +72,24 @@ let bannerTimer = 0;
 
 function setBanner(text: string) {
   window.clearTimeout(bannerTimer);
+  if (text.length === 0) {
+    conceal(banner, "up");
+    return;
+  }
   bannerText.textContent = text;
-  banner.hidden = text.length === 0;
-  if (text.length > 0) bannerTimer = window.setTimeout(() => setBanner(""), 5000);
+  reveal(banner, "up", true);
+  bannerTimer = window.setTimeout(() => setBanner(""), 5000);
+}
+
+function setDelay(text: string) {
+  delayLabel.textContent = text;
+  if (!text) {
+    delayLabel.classList.remove("arrive");
+    return;
+  }
+  delayLabel.classList.remove("arrive");
+  void delayLabel.offsetWidth;
+  delayLabel.classList.add("arrive");
 }
 
 function coverOf(id: string) {
@@ -80,12 +97,31 @@ function coverOf(id: string) {
   return `/covers/${id}.svg`;
 }
 
+let gamesIntro = true;
+
 function renderGames() {
+  if (pick.childElementCount === games.length) {
+    const buttons = pick.querySelectorAll<HTMLButtonElement>(".game");
+    games.forEach((game, index) => {
+      const button = buttons[index];
+      if (!button) return;
+      button.classList.toggle("selected", game.id === selected.id);
+      const meta = button.querySelector("small");
+      if (meta) meta.textContent = `${game.region} · ${ready.has(game.id) ? "ROM neste navegador" : "ROM ainda não gravada"}`;
+    });
+    return;
+  }
+  const intro = gamesIntro;
+  gamesIntro = false;
   pick.replaceChildren();
-  for (const game of games) {
+  games.forEach((game, index) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `game${game.id === selected.id ? " selected" : ""}`;
+    if (intro) {
+      button.classList.add("arrive");
+      button.style.animationDelay = `${index * 50}ms`;
+    }
     button.title = `SHA-1 ${game.sha1}`;
     const image = document.createElement("img");
     image.src = coverOf(game.id);
@@ -104,7 +140,7 @@ function renderGames() {
       void openStored(game);
     });
     pick.append(button);
-  }
+  });
 }
 
 function updateDrop() {
@@ -116,7 +152,7 @@ function replaceScreen() {
   next.id = "screen";
   next.width = 256;
   next.height = 224;
-  next.hidden = true;
+  next.hidden = screen.hidden;
   next.className = screen.className;
   screen.replaceWith(next);
   screen = next;
@@ -130,9 +166,8 @@ function stopPlay() {
   sab = null;
   pads = null;
   loadedGame = null;
-  screen.hidden = true;
-  picture.hidden = true;
-  drop.hidden = false;
+  conceal(picture, "down");
+  reveal(drop, "down");
   hideBubble(0);
   hideBubble(1);
   if (transferred) replaceScreen();
@@ -196,9 +231,9 @@ async function boot(game: Game, rom: Uint8Array) {
   startWorker(rom);
   loadedGame = game;
   selected = game;
-  drop.hidden = true;
-  picture.hidden = false;
   screen.hidden = false;
+  conceal(drop, "down");
+  reveal(picture, "down");
   setBanner("");
   roomState.textContent = `${game.title} nesta máquina. Os dois teclados jogam aqui.`;
   renderGames();
@@ -350,15 +385,19 @@ function placeBubbles(peaks: { x: number; y: number }[]) {
 function hideBubble(slot: 0 | 1) {
   window.clearTimeout(bubbleTimer[slot]);
   bubbleMode[slot] = "off";
-  bubbles[slot].hidden = true;
-  bubbles[slot].replaceChildren();
+  const bubble = bubbles[slot];
+  conceal(bubble, "up");
+  const token = bubble.dataset.step;
+  window.setTimeout(() => {
+    if (bubble.dataset.step === token && bubble.hidden) bubble.replaceChildren();
+  }, 34 * 4 + 50);
 }
 
 function showBubble(slot: 0 | 1, mode: "text" | "typing", text = "") {
   const bubble = bubbles[slot];
   window.clearTimeout(bubbleTimer[slot]);
   bubbleMode[slot] = mode;
-  bubble.hidden = false;
+  reveal(bubble, "up");
   bubble.replaceChildren();
   if (mode === "typing") {
     const dots = document.createElement("span");
@@ -398,21 +437,22 @@ function pushChat(line: ChatLine) {
   const who = document.createElement("b");
   const name = line.name?.trim();
   who.textContent = name || (line.from === "host" ? "Anfitrião" : "Convidado");
+  row.classList.add("arrive");
   row.append(who, document.createTextNode(` ${line.text}`));
   log.append(row);
   log.scrollTop = log.scrollHeight;
 }
 
 function setChatEnabled(on: boolean) {
-  chatPanel.hidden = !on;
+  shown(chatPanel, on, "down");
   chatInput.disabled = !on;
   chatButton.disabled = !on;
   chatInput.placeholder = on ? "Escreve para a sala" : "A conversa abre na sala";
 }
 
 function setRoomCode(code: string | null) {
-  roomCode.hidden = !code;
-  roomTitle.hidden = !!code;
+  shown(roomCode, !!code, "up");
+  shown(roomTitle, !code, "up");
   roomCode.textContent = code ?? "";
 }
 
@@ -443,16 +483,20 @@ function fillManual() {
 
 function openManual() {
   fillManual();
-  manual.hidden = false;
+  reveal(manual, "modal");
   document.querySelector<HTMLButtonElement>("#manual-close")?.focus();
 }
 
 function closeManual() {
-  manual.hidden = true;
+  conceal(manual, "modal");
 }
 
-function playerLine(name: string, control: string, state: string) {
+function playerLine(name: string, control: string, state: string, index: number, animate: boolean) {
   const item = document.createElement("li");
+  if (animate) {
+    item.classList.add("arrive");
+    item.style.animationDelay = `${index * 40}ms`;
+  }
   const kind = kindFromLabel(control);
   if (kind) item.append(padIcon(kind));
   const text = document.createElement("span");
@@ -465,6 +509,8 @@ function playerLine(name: string, control: string, state: string) {
   people.append(item);
 }
 
+let peoplePaints = 0;
+
 function renderPeople() {
   const [first, second] = padStatus();
   const key = session && roster
@@ -472,18 +518,22 @@ function renderPeople() {
     : `local:${nick}:${first ?? ""}:${second ?? ""}`;
   if (key === peopleKey) return;
   peopleKey = key;
+  const animate = peoplePaints >= 2;
+  peoplePaints += 1;
   people.replaceChildren();
   if (!session || !roster) {
-    playerLine(nick || "Jogador 1", first ?? "Teclado", "nesta máquina");
-    playerLine("Jogador 2", second ?? "Teclado", "nesta máquina");
+    playerLine(nick || "Jogador 1", first ?? "Teclado", "nesta máquina", 0, animate);
+    playerLine("Jogador 2", second ?? "Teclado", "nesta máquina", 1, animate);
     return;
   }
   const you = session.role;
-  playerLine(roster.host.name || "Anfitrião", roster.host.control, you === "host" ? "você" : roster.host.here ? "na sala" : "saiu");
+  playerLine(roster.host.name || "Anfitrião", roster.host.control, you === "host" ? "você" : roster.host.here ? "na sala" : "saiu", 0, animate);
   playerLine(
     roster.guest.name || "Convidado",
     roster.guest.here ? roster.guest.control : "—",
     you === "guest" ? "você" : roster.guest.here ? "na sala" : "aguardando",
+    1,
+    animate,
   );
 }
 
@@ -491,26 +541,36 @@ function when(ms: number) {
   return new Date(ms).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+let savesFor = "";
+
 async function renderSaves() {
+  const id = loadedGame?.id ?? "";
+  const intro = id !== "" && id !== savesFor;
+  savesFor = id;
   saves.replaceChildren();
   if (!loadedGame) return;
   const game = loadedGame;
   const slots = await saveList(game.id);
   const bySlot = new Map(slots.map((slot) => [slot.slot, slot.savedAt]));
-  for (const slot of saveSlots) {
+  saveSlots.forEach((slot, index) => {
     const savedAt = bySlot.get(slot);
     const save = document.createElement("button");
     save.type = "button";
     save.textContent = savedAt ? `Gravar ${slot}` : `Slot ${slot}`;
     save.addEventListener("click", () => void writeSlot(game, slot));
-    saves.append(save);
     const load = document.createElement("button");
     load.type = "button";
     load.textContent = savedAt ? `Carregar ${when(savedAt)}` : "Vazio";
     load.disabled = !savedAt;
     load.addEventListener("click", () => void readSlot(game, slot, savedAt ?? 0));
-    saves.append(load);
-  }
+    if (intro) {
+      save.classList.add("arrive");
+      load.classList.add("arrive");
+      save.style.animationDelay = `${index * 40}ms`;
+      load.style.animationDelay = `${index * 40 + 20}ms`;
+    }
+    saves.append(save, load);
+  });
 }
 
 async function writeSlot(game: Game, slot: number) {
@@ -528,11 +588,11 @@ async function writeSlot(game: Game, slot: number) {
 function showConfirm(text: string, mode: "both" | "cancel") {
   confirmText.textContent = text;
   confirmYes.hidden = mode === "cancel";
-  confirmBox.hidden = false;
+  reveal(confirmBox, "modal");
 }
 
 function hideConfirm() {
-  confirmBox.hidden = true;
+  conceal(confirmBox, "modal");
   saveDialog = null;
 }
 
@@ -581,7 +641,7 @@ async function connect(role: Role, code: string) {
       roomState.textContent = text;
     },
     onStart: (slot, delay) => {
-      delayLabel.textContent = `Atraso de input: ${delay} frames.`;
+      setDelay(`Atraso de input: ${delay} frames.`);
       worker?.postMessage({ t: "net-start", slot, delay });
     },
     onRemote: (frames) => worker?.postMessage({ t: "net-remote", frames }),
@@ -593,7 +653,7 @@ async function connect(role: Role, code: string) {
       for (const frame of [...remoteChecks.keys()]) {
         if (frame >= snapshot.frame) remoteChecks.delete(frame);
       }
-      delayLabel.textContent = `Atraso de input: ${snapshot.delay} frames.`;
+      setDelay(`Atraso de input: ${snapshot.delay} frames.`);
       const state = snapshot.state.slice();
       const slot = mine.role === "host" ? 0 : 1;
       worker?.postMessage(
@@ -619,7 +679,7 @@ async function connect(role: Role, code: string) {
       roster = null;
       setChatEnabled(false);
       setRoomCode(null);
-      leaveButton.hidden = true;
+      shown(leaveButton, false, "left");
       typingSent = false;
       hideConfirm();
       hideBubble(0);
@@ -672,7 +732,7 @@ async function connect(role: Role, code: string) {
   });
   session = mine;
   setRoomCode(code);
-  leaveButton.hidden = false;
+  shown(leaveButton, true, "left");
   mine.setProfile(localControl(), nick);
   setChatEnabled(true);
   sentProfile = `${localControl()}\n${nick}`;
@@ -680,7 +740,7 @@ async function connect(role: Role, code: string) {
     await session.open();
   } catch (error) {
     if (session === mine) session = null;
-    leaveButton.hidden = true;
+    shown(leaveButton, false, "left");
     setChatEnabled(false);
     setRoomCode(null);
     setBanner(error instanceof Error ? error.message : "Não foi possível abrir a sala.");
@@ -833,7 +893,7 @@ function leaveRoom() {
   roster = null;
   setChatEnabled(false);
   setRoomCode(null);
-  leaveButton.hidden = true;
+  shown(leaveButton, false, "left");
   typingSent = false;
   hideConfirm();
   clearChat();
@@ -841,7 +901,7 @@ function leaveRoom() {
   hideBubble(1);
   worker?.postMessage({ t: "local" });
   roomState.textContent = "Partida local. A sala leva o outro controle para outra casa.";
-  delayLabel.textContent = "";
+  setDelay("");
   renderPeople();
   setBanner("Você saiu da sala.");
 }
@@ -1001,6 +1061,7 @@ updateDrop();
 renderGames();
 renderPeople();
 requestAnimationFrame(pump);
+startTour();
 
 booting = (async () => {
   try {

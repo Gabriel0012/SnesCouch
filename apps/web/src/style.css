@@ -84,7 +84,8 @@ h2 {
   letter-spacing: 0.04em;
   color: var(--b);
 }
-.room-head h2 { display: flex; }
+.room-head h2 { display: grid; }
+#room-code, #room-title { grid-area: 1 / 1; width: fit-content; }
 #room-code { letter-spacing: 0.16em; font-size: 14px; }
 .lede, .note, #room-state, #delay { color: var(--muted); }
 header .lede { color: #6e7585; margin: 0; }
@@ -187,6 +188,7 @@ header .lede { color: #6e7585; margin: 0; }
   border-left: 6px solid var(--y);
   box-shadow: 6px 6px 0 #000;
 }
+#viewport > * { grid-area: 1 / 1; }
 
 .drop {
   width: min(100%, 28rem);
@@ -269,10 +271,10 @@ header .lede { color: #6e7585; margin: 0; }
   width: 0.32rem;
   height: 0.32rem;
   background: #f6f3ea;
-  animation: talk 0.9s infinite ease-in-out;
+  animation: talk 0.3s infinite steps(6, end);
 }
-.dots i:nth-child(2) { animation-delay: 0.15s; }
-.dots i:nth-child(3) { animation-delay: 0.3s; }
+.dots i:nth-child(2) { animation-delay: 0.05s; }
+.dots i:nth-child(3) { animation-delay: 0.1s; }
 @keyframes talk {
   0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
   40% { transform: translateY(-3px); opacity: 1; }
@@ -335,20 +337,33 @@ header .lede { color: #6e7585; margin: 0; }
 #vol[data-level="mute"] .wave { display: none; }
 #vol[data-level="mute"] .cross { display: block; }
 .volume-pop {
-  display: none;
+  display: flex;
   position: absolute;
   z-index: 3;
   left: 50%;
   bottom: calc(100% - 0.35rem);
   transform: translateX(-50%);
+  translate: 0 12px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
   align-items: center;
   gap: 0.45rem;
   padding: 0.45rem 0.55rem 0.8rem;
   background: var(--well);
   box-shadow: inset 0 0 0 3px var(--x), 3px 3px 0 #000;
+  transition:
+    translate 0.13s steps(4, end),
+    opacity 0.13s steps(4, end),
+    visibility 0.13s steps(4, end);
 }
 .volume:hover .volume-pop,
-.volume:focus-within .volume-pop { display: flex; }
+.volume:focus-within .volume-pop {
+  translate: 0 0;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
 #vol-slider { width: 7.5rem; accent-color: var(--b); }
 #vol-readout { min-width: 2.8rem; text-align: right; color: var(--b); font-size: 13px; }
 
@@ -500,10 +515,208 @@ button[disabled] { cursor: default; }
 .manual-row b { color: var(--b); }
 .manual-card .note { margin-top: 0.75rem; }
 
+:root { --tick: 33.33ms; }
+
+@keyframes in-up {
+  from { translate: 0 32px; opacity: 0; }
+  to { translate: 0 0; opacity: 1; }
+}
+@keyframes out-up {
+  from { translate: 0 0; opacity: 1; }
+  to { translate: 0 32px; opacity: 0; }
+}
+@keyframes in-down {
+  from { translate: 0 -32px; opacity: 0; }
+  to { translate: 0 0; opacity: 1; }
+}
+@keyframes out-down {
+  from { translate: 0 0; opacity: 1; }
+  to { translate: 0 -32px; opacity: 0; }
+}
+@keyframes in-right {
+  from { translate: -32px 0; opacity: 0; }
+  to { translate: 0 0; opacity: 1; }
+}
+@keyframes out-right {
+  from { translate: 0 0; opacity: 1; }
+  to { translate: -32px 0; opacity: 0; }
+}
+@keyframes in-left {
+  from { translate: 32px 0; opacity: 0; }
+  to { translate: 0 0; opacity: 1; }
+}
+@keyframes out-left {
+  from { translate: 0 0; opacity: 1; }
+  to { translate: 32px 0; opacity: 0; }
+}
+@keyframes slide-left {
+  from { translate: 64px 0; opacity: 0; }
+  to { translate: 0 0; opacity: 1; }
+}
+@keyframes slide-right {
+  from { translate: -64px 0; opacity: 0; }
+  to { translate: 0 0; opacity: 1; }
+}
+@keyframes modal-in {
+  from { translate: 0 64px; opacity: 0; }
+  to { translate: 0 0; opacity: 1; }
+}
+@keyframes modal-out {
+  from { translate: 0 0; opacity: 1; }
+  to { translate: 0 40px; opacity: 0; }
+}
+@keyframes shade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes shade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.step-out { pointer-events: none; }
+.step-in.move-up { animation: in-up calc(var(--tick) * 5) steps(5, end) both; }
+.step-out.move-up { animation: out-up calc(var(--tick) * 4) steps(4, end) both; }
+.step-in.move-down { animation: in-down calc(var(--tick) * 5) steps(5, end) both; }
+.step-out.move-down { animation: out-down calc(var(--tick) * 4) steps(4, end) both; }
+.step-in.move-right { animation: in-right calc(var(--tick) * 5) steps(5, end) both; }
+.step-out.move-right { animation: out-right calc(var(--tick) * 4) steps(4, end) both; }
+.step-in.move-left { animation: in-left calc(var(--tick) * 5) steps(5, end) both; }
+.step-out.move-left { animation: out-left calc(var(--tick) * 4) steps(4, end) both; }
+.step-in.move-modal { animation: modal-in calc(var(--tick) * 8) steps(8, end) both; }
+.step-out.move-modal { animation: modal-out calc(var(--tick) * 5) steps(5, end) both; }
+
+header.arrive { animation: in-up calc(var(--tick) * 5) steps(5, end) both; }
+#viewport.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; animation-delay: 0.05s; }
+.toolbar.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; animation-delay: 0.08s; }
+.saves-line.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; animation-delay: 0.1s; }
+#panel.arrive { animation: in-left calc(var(--tick) * 5) steps(5, end) both; animation-delay: 0.05s; }
+footer.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; animation-delay: 0.08s; }
+.game.arrive { animation: in-right calc(var(--tick) * 5) steps(5, end) both; }
+.people li.arrive,
+.chat-line.arrive,
+#delay.arrive,
+.saves button.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; }
+
+#manual.step-in.move-modal,
+#tour.step-in.move-modal { animation: shade-in calc(var(--tick) * 4) steps(4, end) both; }
+#manual.step-out.move-modal,
+#tour.step-out.move-modal { animation: shade-out calc(var(--tick) * 4) steps(4, end) both; }
+#tour-frame.step-in.move-left { animation: slide-left calc(var(--tick) * 5) steps(5, end) both; }
+#tour-frame.step-in.move-right { animation: slide-right calc(var(--tick) * 5) steps(5, end) both; }
+#manual.step-in.move-modal .manual-card,
+#tour.step-in.move-modal .tour-sheet { animation: modal-in calc(var(--tick) * 8) steps(8, end) both; }
+#manual.step-out.move-modal .manual-card,
+#tour.step-out.move-modal .tour-sheet { animation: modal-out calc(var(--tick) * 5) steps(5, end) both; }
+
+#tour {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 0.85rem;
+  overflow: auto;
+  background: #05060a;
+  box-shadow: inset 0 0 0 6px #000, inset 0 0 0 10px var(--b);
+}
+#tour[hidden] { display: none; }
+.tour-sheet {
+  width: min(100%, 86rem);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  min-height: 0;
+}
+.tour-top, .tour-nav { display: flex; align-items: center; gap: 0.55rem; }
+.tour-kicker, #tour-count {
+  margin: 0;
+  font-family: "Press Start", Silkscreen, monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--b);
+}
+.tour-shot {
+  position: relative;
+  width: min(100%, calc((100dvh - 13.5rem) * 16 / 10));
+  margin-inline: auto;
+  aspect-ratio: 16 / 10;
+  box-shadow: 6px 6px 0 #000;
+}
+#tour-shot { width: 100%; height: 100%; object-fit: contain; display: block; background: #07080c; }
+#tour-marks { position: absolute; inset: 0; }
+#tour-title { text-align: center; }
+#tour-copy {
+  margin: 0 auto;
+  max-width: 46rem;
+  text-align: center;
+  color: var(--body);
+}
+.tour-pips { display: flex; gap: 0.4rem; }
+.tour-pips i {
+  width: 0.7rem;
+  height: 0.7rem;
+  background: #3a3f4a;
+  box-shadow: 2px 2px 0 #000;
+}
+.tour-pips i.on { background: var(--b); }
+#tour-back, #tour-skip {
+  background: var(--well);
+  color: var(--body);
+  box-shadow: inset -3px -3px 0 #111, inset 3px 3px 0 #4a4f5a, 3px 3px 0 #000;
+}
+.pin {
+  position: absolute;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 3px var(--pin), 4px 4px 0 #000;
+  background: color-mix(in srgb, var(--pin) 18%, transparent);
+}
+.pin.b { --pin: var(--b); color: var(--ink); }
+.pin.y { --pin: var(--y); color: #06210f; }
+.pin.x { --pin: var(--x); color: #f4f7ff; }
+.pin.a { --pin: var(--a); color: #fff6f4; }
+.pin-tag {
+  position: absolute;
+  left: 0;
+  padding: 0.28rem 0.4rem;
+  background: var(--pin);
+  color: inherit;
+  font-family: "Press Start", Silkscreen, monospace;
+  font-size: 8px;
+  line-height: 1.45;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  box-shadow: 3px 3px 0 #000;
+}
+.pin.above .pin-tag { bottom: calc(100% + 6px); }
+.pin.inside .pin-tag { top: 8px; left: 8px; }
+.pin.foot .pin-tag { top: auto; bottom: 8px; left: 8px; }
+.pin.inline .pin-tag { left: auto; right: 6px; top: 50%; translate: 0 -50%; }
+.pin.right .pin-tag { left: calc(100% + 6px); top: 50%; translate: 0 -50%; }
+.pin.left .pin-tag { left: auto; right: calc(100% + 6px); top: 50%; translate: 0 -50%; }
+
 @media (max-width: 1080px) {
   .shell {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 9rem) minmax(0, 1fr) minmax(0, 12rem);
   }
   #panel { border-left: 0; border-top: 4px solid var(--ink); }
+  .game.arrive { animation-name: in-up; }
+  #panel.arrive { animation-name: in-down; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-in, .step-out,
+  header.arrive, #viewport.arrive, .toolbar.arrive, .saves-line.arrive,
+  #panel.arrive, footer.arrive, .game.arrive, .people li.arrive,
+  .chat-line.arrive, #delay.arrive, .saves button.arrive,
+  #manual.step-in.move-modal .manual-card,
+  #manual.step-out.move-modal .manual-card,
+  #tour.step-in.move-modal .tour-sheet,
+  #tour.step-out.move-modal .tour-sheet,
+  .dots i, .volume-pop {
+    animation: none !important;
+    transition: none !important;
+  }
 }
