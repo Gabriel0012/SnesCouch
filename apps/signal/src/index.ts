@@ -5,6 +5,7 @@ export { Room };
 
 export interface Env {
   ROOMS: DurableObjectNamespace;
+  ASSETS?: Fetcher;
   TURN_URL?: string;
   TURN_USERNAME?: string;
   TURN_CREDENTIAL?: string;
@@ -51,6 +52,14 @@ export default {
       const room = env.ROOMS.get(id);
       return room.fetch(request);
     }
-    return new Response("Não encontrado.", { status: 404, headers: headers() });
+    return serveAsset(request, env);
   },
 };
+
+async function serveAsset(request: Request, env: Env): Promise<Response> {
+  if (!env.ASSETS) return new Response("Não encontrado.", { status: 404, headers: headers() });
+  const asset = await env.ASSETS.fetch(request);
+  const out = new Headers(asset.headers);
+  for (const [key, value] of Object.entries(headers())) out.set(key, value);
+  return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers: out });
+}
