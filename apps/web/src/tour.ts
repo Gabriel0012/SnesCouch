@@ -46,7 +46,7 @@ const slides: Slide[] = [
     image: "/tour/volume.png",
     alt: "Barra da tela com tamanho, volume aberto, reiniciar e saves.",
     title: "A tela",
-    body: "Ajusta o tamanho, o volume e a tela cheia. Reiniciar volta o jogo. Esquecer ROM apaga o arquivo daqui. Os saves aparecem embaixo quando a ROM abre.",
+    body: "Ajusta o tamanho, o volume e a tela cheia. Reiniciar volta o jogo. Esquecer ROM apaga o arquivo daqui. Saves abre os slots, cada um com o print da tela.",
     pins: [
       { x: 20.7, y: 83.2, w: 25.1, h: 4.9, label: "Tamanho", color: "x", place: "above" },
       { x: 40.7, y: 77.7, w: 14.1, h: 10.4, label: "Volume", color: "b", place: "above" },
@@ -58,7 +58,7 @@ const slides: Slide[] = [
     image: "/tour/manual.png",
     alt: "Manual aberto com os botões do jogador 1.",
     title: "Controles",
-    body: "O Manual lista cada botão. Jogador 1: setas, Z X A S, Q W, Espaço, Shift esquerdo e F. Jogador 2, rolando o manual: I J K L, N M G H, U O, P, V e ponto e vírgula.",
+    body: "No computador, jogador 1 e jogador 2 ficam lado a lado. No celular, cada um abre numa aba. O teclado aparece em teclas. O controle desenha o Super Nintendo, com uma linha até a ação no jogo. Na sala, só entra o seu.",
     pins: [
       { x: 34.1, y: 17.6, w: 31.8, h: 64.8, label: "Lista do teclado", color: "b", place: "above" },
       { x: 75.4, y: 56.9, w: 7.1, h: 4.8, label: "Abre aqui", color: "y", place: "right" },

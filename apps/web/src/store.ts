@@ -6,9 +6,13 @@ export interface RomRecord {
   bytes: Uint8Array;
 }
 
+export type SaveOrigin = "local" | "online";
+
 export interface SaveSlot {
   slot: number;
   savedAt: number;
+  origin: SaveOrigin;
+  shot: Uint8Array | null;
 }
 
 const SLOTS = [1, 2, 3];
@@ -83,6 +87,13 @@ async function open(): Promise<Database> {
       value TEXT NOT NULL
     );
   `);
+  const columns = new Set(
+    many(db, "PRAGMA table_info(saves)", [])
+      .map((row) => row.name)
+      .filter((name): name is string => typeof name === "string"),
+  );
+  if (!columns.has("shot")) db.run("ALTER TABLE saves ADD COLUMN shot BLOB");
+  if (!columns.has("origin")) db.run("ALTER TABLE saves ADD COLUMN origin TEXT");
   return db;
 }
 
@@ -179,17 +190,22 @@ export function forgetRom(gameId: string) {
   return enqueue(async () => {
     const database = await db();
     database.run("DELETE FROM roms WHERE game_id = ?", [gameId]);
+    database.run("DELETE FROM saves WHERE game_id = ?", [gameId]);
     await persist(database);
   });
 }
 
-export function saveState(gameId: string, slot: number, state: Uint8Array) {
+export function saveState(gameId: string, slot: number, state: Uint8Array, shot: Uint8Array | null, origin: SaveOrigin) {
   return enqueue(async () => {
     const database = await db();
     database.run(
-      `INSERT INTO saves (game_id, slot, state, saved_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT(game_id, slot) DO UPDATE SET state = excluded.state, saved_at = excluded.saved_at`,
-      [gameId, slot, state, Date.now()],
+      `INSERT INTO saves (game_id, slot, state, saved_at, shot, origin) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(game_id, slot) DO UPDATE SET
+         state = excluded.state,
+         saved_at = excluded.saved_at,
+         shot = excluded.shot,
+         origin = excluded.origin`,
+      [gameId, slot, state, Date.now(), shot, origin],
     );
     await persist(database);
   });
@@ -197,9 +213,14 @@ export function saveState(gameId: string, slot: number, state: Uint8Array) {
 
 export function saveList(gameId: string): Promise<SaveSlot[]> {
   return enqueue(async () => {
-    return many(await db(), "SELECT slot, saved_at FROM saves WHERE game_id = ? ORDER BY slot", [gameId])
+    return many(await db(), "SELECT slot, saved_at, origin, shot FROM saves WHERE game_id = ? ORDER BY slot", [gameId])
       .filter((row) => typeof row.slot === "number" && typeof row.saved_at === "number")
-      .map((row) => ({ slot: row.slot as number, savedAt: row.saved_at as number }));
+      .map((row) => ({
+        slot: row.slot as number,
+        savedAt: row.saved_at as number,
+        origin: row.origin === "online" ? "online" : "local",
+        shot: asBytes(row.shot),
+      }));
   });
 }
 

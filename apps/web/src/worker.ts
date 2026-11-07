@@ -23,7 +23,7 @@ type Core = {
 };
 
 let core: Core | null = null;
-interface LoadMessage { t: "load"; rom: ArrayBuffer; canvas: OffscreenCanvas; sab: SharedArrayBuffer }
+interface LoadMessage { t: "load"; rom: ArrayBuffer; canvas: OffscreenCanvas; sab: SharedArrayBuffer; net?: { slot: Slot; delay: number } }
 interface NetStart { t: "net-start"; slot: Slot; delay: number }
 interface NetRemote { t: "net-remote"; frames: { frame: number; buttons: number }[] }
 interface NetResume { t: "net-resume"; slot: Slot; delay: number; frame: number; state: ArrayBuffer }
@@ -183,6 +183,16 @@ function run(p0: number, p1: number) {
   emitAudio();
 }
 
+async function frameShot(): Promise<Uint8Array | null> {
+  if (!canvas || canvas.width < 2 || canvas.height < 2) return null;
+  try {
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    return new Uint8Array(await blob.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
 function saveState() {
   if (!core) return null;
   const size = core._snes_state_size();
@@ -290,8 +300,12 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
       post({ t: "error", message: "O núcleo não aceitou essa ROM." });
       return;
     }
-    mode = "local";
     clearMacros();
+    lockstep = null;
+    const net = message.net;
+    if (net && (net.slot === 0 || net.slot === 1) && net.delay >= 1) beginNet(net.slot, net.delay, null);
+    else mode = "local";
+    run(0, 0);
     if (!timer) loop();
     post({ t: "loaded", rate: core._snes_sample_rate() });
     return;
@@ -335,7 +349,11 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
       return;
     }
     const state = bytes.slice();
-    post({ t: "saved", state: state.buffer }, [state.buffer]);
+    const shot = await frameShot();
+    if (shot) {
+      const picture = shot.slice();
+      post({ t: "saved", state: state.buffer, shot: picture.buffer }, [state.buffer, picture.buffer]);
+    } else post({ t: "saved", state: state.buffer }, [state.buffer]);
     return;
   }
   if (message.t === "restore") {
@@ -381,6 +399,7 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
       lockstep = null;
       mode = "local";
     }
+    run(0, 0);
     post({ t: "reset-done" });
     return;
   }

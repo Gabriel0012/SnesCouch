@@ -49,6 +49,8 @@ interface SessionOptions {
   onCheck: (frame: number, hash: number) => void;
   onClose: (reason: string) => void;
   onReset: (net: { slot: 0 | 1; delay: number } | null) => void;
+  onResetAsk: (name: string) => void;
+  onResetAnswer: (yes: boolean) => void;
   onChat: (line: ChatLine) => void;
   onChatLog: (lines: ChatLine[]) => void;
   onTyping: (from: Role, on: boolean) => void;
@@ -91,6 +93,7 @@ export class OnlineSession {
   private saveAssembler = new StateAssembler();
   private saveMeta: { id: number; name: string; label: string } | null = null;
   private resetGen = 0;
+  private resetOffer: "out" | "in" | null = null;
   private control = "Teclado";
   private name = "";
   private opened = false;
@@ -165,17 +168,28 @@ export class OnlineSession {
     this.opts.onResume({ frame: 0, state, delay });
   }
 
-  requestReset() {
-    if (this.closed) return;
-    if (this.channel?.readyState === "open" && this.started) {
-      if (this.opts.role === "host") this.broadcastReset();
-      else {
-        this.sendJson({ t: "reset-ask" });
-        this.opts.onStatus("Reiniciando nos dois…");
-      }
+  proposeReset(): boolean {
+    if (this.closed || this.channel?.readyState !== "open" || !this.started || this.resetOffer) return false;
+    this.resetOffer = "out";
+    this.sendJson({ t: "reset-ask", name: this.name || "O outro jogador" });
+    return true;
+  }
+
+  answerReset(yes: boolean) {
+    const offer = this.resetOffer;
+    this.resetOffer = null;
+    if (!yes) {
+      this.sendJson({ t: "reset-no" });
       return;
     }
-    this.opts.onReset(null);
+    if (offer !== "in" && offer !== "out") return;
+    if (this.opts.role === "host") this.broadcastReset();
+    else this.sendJson({ t: "reset-yes" });
+  }
+
+  cancelReset() {
+    if (this.resetOffer) this.sendJson({ t: "reset-no" });
+    this.resetOffer = null;
   }
 
   setProfile(control: string, name: string) {
@@ -186,6 +200,7 @@ export class OnlineSession {
 
   close() {
     this.closed = true;
+    this.resetOffer = null;
     window.clearInterval(this.pingTimer);
     window.clearInterval(this.resendTimer);
     this.channel?.close();
@@ -392,6 +407,7 @@ export class OnlineSession {
   }
 
   private broadcastReset() {
+    this.resetOffer = null;
     this.epoch += 1;
     this.resetGen += 1;
     this.outgoing.clear();
@@ -442,8 +458,27 @@ export class OnlineSession {
         name?: string;
         label?: string;
       };
-      if (message.t === "reset-ask" && this.opts.role === "host" && this.started) this.broadcastReset();
+      if (message.t === "reset-ask" && this.started) {
+        const name = message.name?.trim() || "O outro jogador";
+        if (this.resetOffer === "out") {
+          this.resetOffer = null;
+          if (this.opts.role === "host") this.broadcastReset();
+          else this.sendJson({ t: "reset-yes" });
+        } else if (!this.resetOffer) {
+          this.resetOffer = "in";
+          this.opts.onResetAsk(name);
+        }
+      }
+      if (message.t === "reset-yes" && this.resetOffer === "out" && this.opts.role === "host") {
+        this.resetOffer = null;
+        this.broadcastReset();
+      }
+      if (message.t === "reset-no") {
+        this.resetOffer = null;
+        this.opts.onResetAnswer(false);
+      }
       if (message.t === "reset" && typeof message.n === "number" && message.n > this.resetGen) {
+        this.resetOffer = null;
         this.resetGen = message.n;
         this.epoch += 1;
         this.outgoing.clear();

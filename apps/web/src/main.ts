@@ -2,6 +2,7 @@ import { Speaker } from "./audio.ts";
 import { kindFromLabel, padIcon } from "./icons.ts";
 import { startInstall } from "./install.ts";
 import { KEYBOARD_GUIDE, connectedPads, padStatus, readPads, readSupers, setTouchBits } from "./input.ts";
+import { paintManual } from "./manual.ts";
 import { startTouch } from "./touch.ts";
 import { controlGuide, padLabel } from "./pads.ts";
 import { games, matchRom, type Game } from "./rom.ts";
@@ -13,6 +14,10 @@ import { startTour } from "./tour.ts";
 
 const pick = document.querySelector<HTMLElement>("#pick")!;
 const stage = document.querySelector<HTMLElement>("#stage")!;
+const panel = document.querySelector<HTMLElement>("#panel")!;
+const roomOpen = document.querySelector<HTMLButtonElement>("#room-open")!;
+const roomClose = document.querySelector<HTMLButtonElement>("#room-close")!;
+const roomBackdrop = document.querySelector<HTMLButtonElement>("#room-backdrop")!;
 const drop = document.querySelector<HTMLLabelElement>("#drop")!;
 const dropText = drop.childNodes[0];
 const fileInput = document.querySelector<HTMLInputElement>("#file")!;
@@ -23,6 +28,8 @@ const roomCode = document.querySelector<HTMLElement>("#room-code")!;
 const roomTitle = document.querySelector<HTMLElement>("#room-title")!;
 const chatPanel = document.querySelector<HTMLElement>(".chat")!;
 const manual = document.querySelector<HTMLElement>("#manual")!;
+const manualCard = manual.querySelector<HTMLElement>(".manual-card")!;
+const manualTabs = document.querySelector<HTMLElement>("#manual-tabs")!;
 const manualBody = document.querySelector<HTMLElement>("#manual-body")!;
 const delayLabel = document.querySelector<HTMLElement>("#delay")!;
 const codeInput = document.querySelector<HTMLInputElement>("#code")!;
@@ -42,7 +49,8 @@ const bubbles = [
   document.querySelector<HTMLElement>('.bubble[data-slot="0"]')!,
   document.querySelector<HTMLElement>('.bubble[data-slot="1"]')!,
 ] as const;
-const saves = document.querySelector<HTMLElement>("#saves")!;
+const savesModal = document.querySelector<HTMLElement>("#saves-modal")!;
+const savesGrid = document.querySelector<HTMLElement>("#saves-grid")!;
 const copyButton = document.querySelector<HTMLButtonElement>("#copy")!;
 const volButton = document.querySelector<HTMLButtonElement>("#vol")!;
 const volSlider = document.querySelector<HTMLInputElement>("#vol-slider")!;
@@ -61,10 +69,17 @@ let worker: Worker | null = null;
 const speaker = new Speaker();
 let sab: SharedArrayBuffer | null = null;
 let pads: Uint16Array | null = null;
+type ResetNet = { slot: 0 | 1; delay: number } | null;
+let romBytes: Uint8Array | null = null;
+let resetTimer = 0;
+let relaunching = false;
+let resetNet: ResetNet = null;
 const localChecks = new Map<number, number>();
 const remoteChecks = new Map<number, number>();
 let checkpointWait: ((snapshot: { frame: number; state: Uint8Array; delay: number }) => void) | null = null;
-let saveWait: ((state: Uint8Array) => void) | null = null;
+let saveWait: ((saved: { state: Uint8Array; shot: Uint8Array | null }) => void) | null = null;
+type AlertMode = "forget" | "reset-local" | "reset-ask" | "reset-wait" | "reset-in";
+let alertMode: AlertMode | null = null;
 let nick = "";
 let sentProfile = "";
 let peopleKey = "";
@@ -139,6 +154,7 @@ function renderGames() {
       selected = game;
       updateDrop();
       renderGames();
+      button.scrollIntoView({ inline: "center", block: "nearest" });
       void openStored(game);
     });
     pick.append(button);
@@ -163,6 +179,9 @@ function replaceScreen() {
 }
 
 function stopPlay() {
+  window.clearTimeout(resetTimer);
+  relaunching = false;
+  romBytes = null;
   worker?.terminate();
   worker = null;
   sab = null;
@@ -230,7 +249,8 @@ async function boot(game: Game, rom: Uint8Array) {
   }
   try { await speaker.resume(); } catch { /* o áudio espera um clique */ }
   stopPlay();
-  startWorker(rom);
+  romBytes = rom.slice();
+  startWorker(romBytes);
   loadedGame = game;
   selected = game;
   screen.hidden = false;
@@ -242,7 +262,7 @@ async function boot(game: Game, rom: Uint8Array) {
   await renderSaves();
 }
 
-function startWorker(rom: Uint8Array) {
+function startWorker(rom: Uint8Array, net: ResetNet = null) {
   sab = new SharedArrayBuffer(4);
   pads = new Uint16Array(sab);
   const canvas = screen.transferControlToOffscreen();
@@ -251,7 +271,41 @@ function startWorker(rom: Uint8Array) {
   worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
   worker.onmessage = (event) => onWorker(event.data);
   const copy = rom.slice();
-  worker.postMessage({ t: "load", rom: copy.buffer, canvas, sab }, [copy.buffer, canvas]);
+  worker.postMessage(
+    net ? { t: "load", rom: copy.buffer, canvas, sab, net } : { t: "load", rom: copy.buffer, canvas, sab },
+    [copy.buffer, canvas],
+  );
+}
+
+function kickReset(net: ResetNet) {
+  window.clearTimeout(resetTimer);
+  resetNet = net;
+  if (!romBytes || !loadedGame) {
+    setBanner("Solte a ROM antes de reiniciar.");
+    return;
+  }
+  if (!worker || relaunching) {
+    relaunch(net);
+    return;
+  }
+  worker.postMessage(net ? { t: "reset", slot: net.slot, delay: net.delay } : { t: "reset" });
+  resetTimer = window.setTimeout(() => relaunch(net), 700);
+  setBanner(net ? "Jogo reiniciado nos dois." : "Jogo reiniciado.");
+}
+
+function relaunch(net: ResetNet) {
+  if (!romBytes || !loadedGame) return;
+  window.clearTimeout(resetTimer);
+  resetNet = net;
+  relaunching = true;
+  const rom = romBytes;
+  const game = loadedGame;
+  worker?.terminate();
+  worker = null;
+  if (transferred) replaceScreen();
+  startWorker(rom, net);
+  loadedGame = game;
+  setBanner(net ? "Jogo reiniciado nos dois." : "Jogo reiniciado.");
 }
 
 function onWorker(message: {
@@ -264,10 +318,19 @@ function onWorker(message: {
   frame?: number;
   hash?: number;
   state?: ArrayBuffer;
+  shot?: ArrayBuffer;
   message?: string;
   spots?: { x: number; y: number }[];
 }) {
-  if (message.t === "loaded" && message.rate) speaker.setRate(message.rate);
+  if (message.t === "loaded" && message.rate) {
+    speaker.setRate(message.rate);
+    relaunching = false;
+    window.clearTimeout(resetTimer);
+  }
+  if (message.t === "reset-done") {
+    relaunching = false;
+    window.clearTimeout(resetTimer);
+  }
   if (message.t === "audio" && message.samples && message.rate) {
     speaker.setRate(message.rate);
     speaker.push(message.samples);
@@ -287,12 +350,15 @@ function onWorker(message: {
     checkpointWait = null;
   }
   if (message.t === "saved" && message.state) {
-    saveWait?.(new Uint8Array(message.state));
+    saveWait?.({ state: new Uint8Array(message.state), shot: message.shot ? new Uint8Array(message.shot) : null });
     saveWait = null;
   }
   if (message.t === "restored") setBanner("Save carregado.");
   if (message.t === "places" && message.spots) placeBubbles(message.spots);
-  if (message.t === "error") setBanner(message.message ?? "Falha no núcleo.");
+  if (message.t === "error") {
+    if (message.message === "Não deu para reiniciar o jogo." && !relaunching) relaunch(resetNet);
+    else setBanner(message.message ?? "Falha no núcleo.");
+  }
 }
 
 function compare(frame: number) {
@@ -318,16 +384,16 @@ function askCheckpoint() {
 }
 
 function askSave() {
-  return new Promise<Uint8Array>((resolve, reject) => {
+  return new Promise<{ state: Uint8Array; shot: Uint8Array | null }>((resolve, reject) => {
     const timer = window.setTimeout(() => {
       if (saveWait) {
         saveWait = null;
         reject(new Error("O save demorou."));
       }
     }, 2000);
-    saveWait = (state) => {
+    saveWait = (saved) => {
       window.clearTimeout(timer);
-      resolve(state);
+      resolve(saved);
     };
     worker?.postMessage({ t: "save" });
   });
@@ -459,28 +525,31 @@ function setRoomCode(code: string | null) {
 }
 
 function fillManual() {
-  manualBody.replaceChildren();
   const pads = connectedPads();
-  pads.forEach((pad, index) => {
-    const title = document.createElement("h3");
-    title.textContent = `Jogador ${index + 1} · ${pad ? padLabel(pad) : "Teclado"}`;
-    const rows = pad ? controlGuide(pad) : KEYBOARD_GUIDE[index];
-    manualBody.append(title);
-    for (const row of rows) {
-      const line = document.createElement("p");
-      line.className = "manual-row";
-      const button = document.createElement("b");
-      button.textContent = row.button;
-      line.append(button, document.createTextNode(row.does));
-      manualBody.append(line);
-    }
+  const online = !!session;
+  const mine = mySlot();
+  const players = online
+    ? [{ slot: mine, pad: pads[0], keys: 0 as const }]
+    : ([0, 1] as const).map((index) => ({ slot: index, pad: pads[index], keys: index }));
+  const note = [selected.title + "."];
+  if (online) note.push("Na sala, este manual mostra só o controle desta máquina.");
+  if (selected.id === "final-fight-3") {
+    note.push("Select junto com o Super troca Haggar e Guy, Lucia ou Dean. Haggar, Guy e Dean precisam estar segurando o inimigo.");
+  }
+  paintManual({
+    root: manualBody,
+    tabs: manualTabs,
+    card: manualCard,
+    gameId: selected.id,
+    note: note.join(" "),
+    players: players.map((player) => ({
+      slot: player.slot + 1,
+      device: player.pad ? padLabel(player.pad) : "Teclado",
+      guide: player.pad ? controlGuide(player.pad) : null,
+      keys: KEYBOARD_GUIDE[player.keys],
+      superKey: online || player.keys === 0 ? "F" : ";",
+    })),
   });
-  const note = document.createElement("p");
-  note.className = "note";
-  note.textContent = session
-    ? "Na sala, esta máquina usa o jogador 1. No Final Fight 3, Shift+F (jogador 2: V+;) troca Haggar/Guy, Lucia e Dean. Haggar, Guy e Dean precisam estar segurando o inimigo."
-    : "No Final Fight 3, Shift+F (jogador 2: V+;) troca Haggar/Guy, Lucia e Dean. Haggar, Guy e Dean precisam estar segurando o inimigo.";
-  manualBody.append(note);
 }
 
 function openManual() {
@@ -543,44 +612,111 @@ function when(ms: number) {
   return new Date(ms).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-let savesFor = "";
+const shotUrls: string[] = [];
+
+function plusIcon(): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M12 5v14M5 12h14");
+  svg.append(path);
+  return svg;
+}
+
+function closeSaves(immediate = false) {
+  if (immediate) {
+    savesModal.hidden = true;
+    return;
+  }
+  conceal(savesModal, "modal");
+}
+
+function paintSlots(game: Game, slots: Awaited<ReturnType<typeof saveList>>) {
+  for (const url of shotUrls) URL.revokeObjectURL(url);
+  shotUrls.length = 0;
+  const bySlot = new Map(slots.map((slot) => [slot.slot, slot]));
+  savesGrid.replaceChildren();
+  for (const slot of saveSlots) {
+    const record = bySlot.get(slot);
+    if (!record) {
+      const empty = document.createElement("button");
+      empty.type = "button";
+      empty.className = "slot-empty";
+      const caption = document.createElement("span");
+      caption.textContent = "Adicionar slot";
+      empty.append(plusIcon(), caption);
+      empty.addEventListener("click", () => void writeSlot(game, slot));
+      savesGrid.append(empty);
+      continue;
+    }
+    const card = document.createElement("article");
+    card.className = "slot-card";
+    const shot = document.createElement("button");
+    shot.type = "button";
+    shot.className = "slot-shot";
+    shot.setAttribute("aria-label", `Carregar o save ${slot}`);
+    if (record.shot) {
+      const image = document.createElement("img");
+      const url = URL.createObjectURL(new Blob([record.shot.slice()], { type: "image/png" }));
+      shotUrls.push(url);
+      image.src = url;
+      image.alt = "";
+      shot.append(image);
+    } else {
+      const blank = document.createElement("span");
+      blank.className = "slot-blank";
+      blank.textContent = "Sem print";
+      shot.append(blank);
+    }
+    shot.addEventListener("click", () => void readSlot(game, slot, record.savedAt));
+    const meta = document.createElement("div");
+    meta.className = "slot-meta";
+    const dot = document.createElement("i");
+    const online = record.origin === "online";
+    dot.className = online ? "dot online" : "dot";
+    dot.setAttribute("aria-hidden", "true");
+    const place = document.createElement("span");
+    place.textContent = online ? "Sala" : "Local";
+    const time = document.createElement("span");
+    time.textContent = when(record.savedAt);
+    const again = document.createElement("button");
+    again.type = "button";
+    again.className = "slot-again";
+    again.textContent = "Gravar";
+    again.addEventListener("click", () => void writeSlot(game, slot));
+    meta.append(dot, place, time, again);
+    card.append(shot, meta);
+    savesGrid.append(card);
+  }
+}
 
 async function renderSaves() {
-  const id = loadedGame?.id ?? "";
-  const intro = id !== "" && id !== savesFor;
-  savesFor = id;
-  saves.replaceChildren();
-  if (!loadedGame) return;
-  const game = loadedGame;
-  const slots = await saveList(game.id);
-  const bySlot = new Map(slots.map((slot) => [slot.slot, slot.savedAt]));
-  saveSlots.forEach((slot, index) => {
-    const savedAt = bySlot.get(slot);
-    const save = document.createElement("button");
-    save.type = "button";
-    save.textContent = savedAt ? `Gravar ${slot}` : `Slot ${slot}`;
-    save.addEventListener("click", () => void writeSlot(game, slot));
-    const load = document.createElement("button");
-    load.type = "button";
-    load.textContent = savedAt ? `Carregar ${when(savedAt)}` : "Vazio";
-    load.disabled = !savedAt;
-    load.addEventListener("click", () => void readSlot(game, slot, savedAt ?? 0));
-    if (intro) {
-      save.classList.add("arrive");
-      load.classList.add("arrive");
-      save.style.animationDelay = `${index * 40}ms`;
-      load.style.animationDelay = `${index * 40 + 20}ms`;
-    }
-    saves.append(save, load);
-  });
+  if (!loadedGame) {
+    if (!savesModal.hidden) closeSaves(true);
+    return;
+  }
+  if (savesModal.hidden) return;
+  paintSlots(loadedGame, await saveList(loadedGame.id));
+}
+
+async function openSaves() {
+  if (!loadedGame || !worker) {
+    setBanner("Solte a ROM antes de abrir os saves.");
+    return;
+  }
+  paintSlots(loadedGame, await saveList(loadedGame.id));
+  reveal(savesModal, "modal");
+  document.querySelector<HTMLButtonElement>("#saves-close")?.focus();
 }
 
 async function writeSlot(game: Game, slot: number) {
   if (!worker || loadedGame?.id !== game.id) return;
   try {
-    const state = await askSave();
-    await saveState(game.id, slot, state);
-    setBanner(`Save ${slot} gravado neste navegador.`);
+    const saved = await askSave();
+    const origin = session ? "online" : "local";
+    await saveState(game.id, slot, saved.state, saved.shot, origin);
+    setBanner(saved.shot ? `Save ${slot} gravado, com o print da tela.` : `Save ${slot} gravado, sem o print da tela.`);
     await renderSaves();
   } catch (error) {
     setBanner(error instanceof Error ? error.message : "Não deu para gravar o save.");
@@ -600,6 +736,7 @@ function hideConfirm() {
 
 async function readSlot(game: Game, slot: number, savedAt: number) {
   if (!worker || loadedGame?.id !== game.id) return;
+  closeSaves(true);
   const state = await loadState(game.id, slot);
   if (!state) return;
   if (!session) {
@@ -669,11 +806,24 @@ async function connect(role: Role, code: string) {
       compare(frame);
     },
     onReset: (net) => {
+      if (alertMode?.startsWith("reset")) closeAlert();
       localChecks.clear();
       remoteChecks.clear();
-      if (net) worker?.postMessage({ t: "reset", slot: net.slot, delay: net.delay });
-      else worker?.postMessage({ t: "reset" });
-      setBanner(net ? "Jogo reiniciado nos dois." : "Jogo reiniciado.");
+      kickReset(net);
+    },
+    onResetAsk: (name) => {
+      if (session !== mine || alertMode === "forget" || saveDialog) {
+        mine.answerReset(false);
+        return;
+      }
+      openAlert("reset-in", name);
+    },
+    onResetAnswer: (yes) => {
+      if (session !== mine || yes) return;
+      if (alertMode === "reset-wait" || alertMode === "reset-in") {
+        closeAlert();
+        setBanner("O outro jogador cancelou o reinício.");
+      }
     },
     onClose: (reason) => {
       if (session !== mine) return;
@@ -684,6 +834,7 @@ async function connect(role: Role, code: string) {
       shown(leaveButton, false, "left");
       typingSent = false;
       hideConfirm();
+      if (alertMode?.startsWith("reset")) closeAlert();
       hideBubble(0);
       hideBubble(1);
       renderPeople();
@@ -910,13 +1061,51 @@ function leaveRoom() {
 
 leaveButton.addEventListener("click", () => leaveRoom());
 
+function roomDrawer(): boolean {
+  return window.matchMedia("(max-width: 1080px)").matches;
+}
+
+function setRoom(open: boolean) {
+  const visible = roomDrawer() && open;
+  panel.classList.toggle("open", visible);
+  panel.inert = roomDrawer() && !visible;
+  roomBackdrop.hidden = !visible;
+  roomOpen.setAttribute("aria-expanded", visible ? "true" : "false");
+  if (visible) roomClose.focus();
+}
+
+roomOpen.addEventListener("click", () => setRoom(true));
+roomClose.addEventListener("click", () => {
+  setRoom(false);
+  roomOpen.focus();
+});
+roomBackdrop.addEventListener("click", () => {
+  setRoom(false);
+  roomOpen.focus();
+});
+window.addEventListener("resize", () => setRoom(panel.classList.contains("open")));
+setRoom(false);
+
 document.querySelector("#manual-open")!.addEventListener("click", () => openManual());
 document.querySelector("#manual-close")!.addEventListener("click", () => closeManual());
 manual.addEventListener("click", (event) => {
   if (event.target === manual) closeManual();
 });
+document.querySelector("#saves-open")!.addEventListener("click", () => void openSaves());
+document.querySelector("#saves-close")!.addEventListener("click", () => closeSaves());
+savesModal.addEventListener("click", (event) => {
+  if (event.target === savesModal) closeSaves();
+});
+
 window.addEventListener("keydown", (event) => {
-  if (event.code === "Escape" && !manual.hidden) closeManual();
+  if (event.code === "Escape" && !alertBox.hidden) dismissAlert();
+  else if (event.code === "Escape" && !savesModal.hidden) closeSaves();
+  else if (event.code === "Escape" && !manual.hidden) closeManual();
+  else if (event.code === "Escape" && panel.classList.contains("open")) {
+    event.preventDefault();
+    setRoom(false);
+    roomOpen.focus();
+  }
 });
 
 confirmYes.addEventListener("click", () => {
@@ -982,11 +1171,8 @@ document.querySelector("#reset")!.addEventListener("click", () => {
     setBanner("Solte a ROM antes de reiniciar.");
     return;
   }
-  if (session) session.requestReset();
-  else {
-    worker.postMessage({ t: "reset" });
-    setBanner("Jogo reiniciado.");
-  }
+  if (alertMode) return;
+  openAlert(session?.linked() ? "reset-ask" : "reset-local");
 });
 
 volButton.addEventListener("click", () => toggleMute());
@@ -1044,14 +1230,96 @@ startTouch({
   onExit: () => void leaveFullscreen(),
 });
 
+const alertBox = document.querySelector<HTMLElement>("#alert")!;
+const alertText = document.querySelector<HTMLElement>("#alert-text")!;
+const alertYes = document.querySelector<HTMLButtonElement>("#alert-yes")!;
+const alertNo = document.querySelector<HTMLButtonElement>("#alert-no")!;
+
+function openAlert(mode: AlertMode, name = "") {
+  alertMode = mode;
+  alertYes.hidden = mode === "reset-wait";
+  if (mode === "forget") {
+    alertText.textContent = `A ROM e os saves de ${selected.title} saem deste navegador. A partida para. Não tem como desfazer.`;
+    alertYes.textContent = "Esquecer";
+  } else if (mode === "reset-local") {
+    alertText.textContent = "Reiniciar o jogo agora? Ele volta para o começo.";
+    alertYes.textContent = "Reiniciar";
+  } else if (mode === "reset-ask") {
+    alertText.textContent = "Reiniciar nos dois? O outro jogador também precisa confirmar.";
+    alertYes.textContent = "Reiniciar";
+  } else if (mode === "reset-wait") {
+    alertText.textContent = "Esperando o outro jogador confirmar o reinício.";
+  } else {
+    alertText.textContent = `${name} quer reiniciar o jogo. Confirme para os dois voltarem ao começo juntos.`;
+    alertYes.textContent = "Confirmar";
+  }
+  if (alertBox.hidden) reveal(alertBox, "modal");
+  (alertYes.hidden ? alertNo : alertYes).focus();
+}
+
+function closeAlert() {
+  alertMode = null;
+  alertYes.hidden = false;
+  conceal(alertBox, "modal");
+}
+
+function dismissAlert() {
+  const mode = alertMode;
+  if (mode === "reset-wait") session?.cancelReset();
+  if (mode === "reset-in") session?.answerReset(false);
+  if (mode === "reset-wait" || mode === "reset-in") setBanner("Reinício cancelado.");
+  closeAlert();
+}
+
 document.querySelector("#forget")!.addEventListener("click", () => {
-  void (async () => {
-    await forgetRom(selected.id);
-    ready.delete(selected.id);
-    if (loadedGame?.id === selected.id) stopPlay();
-    renderGames();
-    setBanner(`${selected.title} saiu deste navegador.`);
-  })();
+  if (alertMode) return;
+  if (!ready.has(selected.id)) {
+    setBanner("Essa ROM não está neste navegador.");
+    return;
+  }
+  openAlert("forget");
+});
+
+alertYes.addEventListener("click", () => {
+  const mode = alertMode;
+  if (mode === "forget") {
+    closeAlert();
+    void (async () => {
+      const game = selected;
+      await forgetRom(game.id);
+      ready.delete(game.id);
+      if (session && loadedGame?.id === game.id) leaveRoom();
+      if (loadedGame?.id === game.id) stopPlay();
+      renderGames();
+      setBanner(`${game.title} saiu deste navegador.`);
+    })();
+    return;
+  }
+  if (mode === "reset-local") {
+    closeAlert();
+    kickReset(null);
+    return;
+  }
+  if (mode === "reset-ask") {
+    if (!session?.proposeReset()) {
+      closeAlert();
+      setBanner("O outro jogador ainda não entrou na partida.");
+      return;
+    }
+    openAlert("reset-wait");
+    return;
+  }
+  if (mode === "reset-in") {
+    const host = session?.role === "host";
+    session?.answerReset(true);
+    if (host) closeAlert();
+    else openAlert("reset-wait");
+  }
+});
+
+alertNo.addEventListener("click", () => dismissAlert());
+alertBox.addEventListener("click", (event) => {
+  if (event.target === alertBox) dismissAlert();
 });
 
 window.addEventListener("pointerdown", () => {

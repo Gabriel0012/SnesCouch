@@ -16,6 +16,7 @@
     <header class="arrive">
       <p class="mark">SNES Couch</p>
       <p class="lede">A ROM abre neste navegador e fica gravada aqui. Nada é enviado.</p>
+      <button id="room-open" type="button" aria-controls="panel" aria-expanded="false">Sala</button>
       <button id="install" type="button" hidden>Instalar</button>
     </header>
     <div id="banner" role="status" hidden>
@@ -52,7 +53,7 @@
             <button type="button" data-zoom="2">2×</button>
             <button type="button" data-zoom="3">3×</button>
             <button type="button" data-zoom="4">4×</button>
-            <button id="fullscreen" type="button">Tela cheia</button>
+            <button id="fullscreen" type="button" aria-label="Tela cheia"></button>
           </div>
           <div class="volume">
             <button id="vol" type="button" aria-pressed="false" aria-label="Silenciar">
@@ -70,13 +71,12 @@
           </div>
           <span class="toolbar-gap"></span>
           <div class="cluster quiet" role="group" aria-label="Partida">
-            <button id="reset" type="button">Reiniciar</button>
-            <button id="forget" type="button">Esquecer ROM</button>
+            <button id="reset" type="button"><i aria-hidden="true"></i>Reiniciar</button>
+            <button id="forget" type="button"><i aria-hidden="true"></i>Esquecer ROM</button>
           </div>
         </div>
         <div class="saves-line arrive">
-          <span class="saves-label">Saves</span>
-          <div id="saves" class="saves"></div>
+          <button id="saves-open" type="button">Saves</button>
         </div>
         <div id="touch" hidden>
           <button id="touch-exit" type="button" tabindex="-1">Sair</button>
@@ -107,6 +107,7 @@
               <span id="room-code" hidden></span>
               <span id="room-title">Sala</span>
             </h2>
+            <button id="room-close" type="button" aria-label="Fechar">×</button>
           </div>
           <label class="nick">Seu nome
             <input id="nick" maxlength="20" autocomplete="nickname" spellcheck="false" placeholder="Nome na sala" />
@@ -138,12 +139,33 @@
         <button id="manual-open" type="button">Manual</button>
       </aside>
     </div>
+    <button id="room-backdrop" type="button" hidden aria-label="Fechar sala"></button>
+    <div id="alert" hidden>
+      <div class="alert-card" role="dialog" aria-modal="true" aria-labelledby="alert-title">
+        <h2 id="alert-title">Alerta</h2>
+        <p id="alert-text"></p>
+        <div class="row">
+          <button id="alert-yes" type="button">Esquecer</button>
+          <button id="alert-no" type="button">Cancelar</button>
+        </div>
+      </div>
+    </div>
+    <div id="saves-modal" hidden>
+      <div class="saves-card" role="dialog" aria-modal="true" aria-labelledby="saves-title">
+        <div class="saves-bar">
+          <h2 id="saves-title">Saves</h2>
+          <button id="saves-close" type="button" aria-label="Fechar">×</button>
+        </div>
+        <div id="saves-grid"></div>
+      </div>
+    </div>
     <div id="manual" hidden>
       <div class="manual-card" role="dialog" aria-modal="true" aria-labelledby="manual-title">
         <div class="manual-bar">
           <h2 id="manual-title">Manual</h2>
           <button id="manual-close" type="button" aria-label="Fechar">×</button>
         </div>
+        <div id="manual-tabs" class="manual-tabs" role="tablist" hidden></div>
         <div id="manual-body"></div>
       </div>
     </div>
