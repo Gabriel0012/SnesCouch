@@ -15,7 +15,7 @@
   <body>
     <header class="arrive">
       <p class="mark">SNES Couch</p>
-      <p class="lede">A ROM abre neste navegador e fica gravada aqui. Nada é enviado.</p>
+      <p class="lede">A ROM fica neste navegador. Com a conta, o save pode ir para a nuvem.</p>
       <button id="room-open" type="button" aria-controls="panel" aria-expanded="false">Sala</button>
       <button id="install" type="button" hidden>Instalar</button>
     </header>
@@ -109,6 +109,23 @@
             </h2>
             <button id="room-close" type="button" aria-label="Fechar">×</button>
           </div>
+          <div id="account-out">
+            <p class="note">Entre para guardar o save na conta e ver amigos. A ROM continua neste navegador.</p>
+            <div class="row">
+              <a class="login" href="/api/auth/discord" target="_blank" rel="noopener" aria-label="Entrar com Discord"><img src="/src/assets/discord.png" alt="" /></a>
+              <a class="login" href="/api/auth/google" target="_blank" rel="noopener" aria-label="Entrar com Google"><img src="/src/assets/google.png" alt="" /></a>
+            </div>
+          </div>
+          <div id="account-in" hidden>
+            <div class="account-who">
+              <img id="account-avatar" alt="" width="36" height="36" hidden />
+              <div>
+                <b id="account-name"></b>
+                <small>Amigo <button id="account-code" type="button"></button></small>
+              </div>
+            </div>
+            <button id="logout" type="button">Sair da conta</button>
+          </div>
           <label class="nick">Seu nome
             <input id="nick" maxlength="20" autocomplete="nickname" spellcheck="false" placeholder="Nome na sala" />
           </label>
@@ -127,6 +144,14 @@
         <section>
           <h2>Jogadores</h2>
           <ul id="players" class="people"></ul>
+        </section>
+        <section id="friends" hidden>
+          <h2>Amigos</h2>
+          <form id="friend-add" class="row">
+            <input id="friend-code" maxlength="6" autocomplete="off" spellcheck="false" placeholder="Código" />
+            <button type="submit">Pedir</button>
+          </form>
+          <div id="friend-list"></div>
         </section>
         <section class="chat" hidden>
           <h2>Conversa</h2>
@@ -156,6 +181,7 @@
           <h2 id="saves-title">Saves</h2>
           <button id="saves-close" type="button" aria-label="Fechar">×</button>
         </div>
+        <p id="saves-cloud" class="note" hidden>A conta guarda estes saves. A ROM fica neste navegador.</p>
         <div id="saves-grid"></div>
       </div>
     </div>

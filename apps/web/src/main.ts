@@ -1,3 +1,20 @@
+import {
+  acceptFriend,
+  AccountError,
+  askFriend,
+  declineFriend,
+  downloadSave,
+  downloadShot,
+  fetchAccount,
+  listCloud,
+  loadFriends,
+  logoutAccount,
+  publishOpenRoom,
+  removeFriend,
+  uploadSave,
+  type AccountUser,
+  type FriendCard,
+} from "./account.ts";
 import { Speaker } from "./audio.ts";
 import { kindFromLabel, padIcon } from "./icons.ts";
 import { startInstall } from "./install.ts";
@@ -34,6 +51,17 @@ const manualBody = document.querySelector<HTMLElement>("#manual-body")!;
 const delayLabel = document.querySelector<HTMLElement>("#delay")!;
 const codeInput = document.querySelector<HTMLInputElement>("#code")!;
 const nickInput = document.querySelector<HTMLInputElement>("#nick")!;
+const accountOut = document.querySelector<HTMLElement>("#account-out")!;
+const accountIn = document.querySelector<HTMLElement>("#account-in")!;
+const accountAvatar = document.querySelector<HTMLImageElement>("#account-avatar")!;
+const accountName = document.querySelector<HTMLElement>("#account-name")!;
+const accountCode = document.querySelector<HTMLButtonElement>("#account-code")!;
+const logoutButton = document.querySelector<HTMLButtonElement>("#logout")!;
+const friendsSection = document.querySelector<HTMLElement>("#friends")!;
+const friendForm = document.querySelector<HTMLFormElement>("#friend-add")!;
+const friendCodeInput = document.querySelector<HTMLInputElement>("#friend-code")!;
+const friendList = document.querySelector<HTMLElement>("#friend-list")!;
+const savesCloud = document.querySelector<HTMLElement>("#saves-cloud")!;
 const people = document.querySelector<HTMLElement>("#players")!;
 const log = document.querySelector<HTMLElement>("#log")!;
 const chatForm = document.querySelector<HTMLFormElement>("#chat")!;
@@ -81,6 +109,21 @@ let saveWait: ((saved: { state: Uint8Array; shot: Uint8Array | null }) => void) 
 type AlertMode = "forget" | "reset-local" | "reset-ask" | "reset-wait" | "reset-in";
 let alertMode: AlertMode | null = null;
 let nick = "";
+let account: AccountUser | null = null;
+let hostedCode: string | null = null;
+let roomChain: Promise<void> = Promise.resolve();
+let roomWanted: string | null = null;
+
+function queueRoom(code: string | null): Promise<void> {
+  hostedCode = code;
+  roomWanted = code;
+  const run = roomChain.then(async () => {
+    if (!account || roomWanted !== code) return;
+    await publishOpenRoom(code);
+  });
+  roomChain = run.then(() => undefined, () => undefined);
+  return run;
+}
 let sentProfile = "";
 let peopleKey = "";
 let booting: Promise<void> = Promise.resolve();
@@ -610,14 +653,14 @@ function renderPeople() {
   const [first, second] = padStatus();
   const key = session && roster
     ? `sala:${session.role}:${roster.host.here}:${roster.host.control}:${roster.host.name}:${roster.guest.here}:${roster.guest.control}:${roster.guest.name}`
-    : `local:${nick}:${first ?? ""}:${second ?? ""}`;
+    : `local:${roomName()}:${first ?? ""}:${second ?? ""}`;
   if (key === peopleKey) return;
   peopleKey = key;
   const animate = peoplePaints >= 2;
   peoplePaints += 1;
   people.replaceChildren();
   if (!session || !roster) {
-    playerLine(nick || "Jogador 1", first ?? "Teclado", "nesta máquina", 0, animate);
+    playerLine(roomName() || "Jogador 1", first ?? "Teclado", "nesta máquina", 0, animate);
     playerLine("Jogador 2", second ?? "Teclado", "nesta máquina", 1, animate);
     return;
   }
@@ -724,12 +767,56 @@ async function renderSaves() {
   paintSlots(loadedGame, await saveList(loadedGame.id));
 }
 
+async function slotsFor(game: Game) {
+  if (!account) return saveList(game.id);
+  try {
+    return await syncSaves(game);
+  } catch (error) {
+    if (error instanceof AccountError && error.status === 401) {
+      account = null;
+      paintAccount();
+    }
+    setBanner(error instanceof Error ? error.message : "A nuvem não respondeu.");
+    return saveList(game.id);
+  }
+}
+
+async function pushSlot(game: Game, slot: number, record: { origin: "local" | "online"; shot: Uint8Array | null }) {
+  const state = await loadState(game.id, slot);
+  if (!state) return;
+  const savedAt = await uploadSave(game.id, slot, game.sha1, state, record.shot);
+  await saveState(game.id, slot, state, record.shot, record.origin, savedAt);
+}
+
+async function syncSaves(game: Game) {
+  const remote = await listCloud(game.id);
+  const local = await saveList(game.id);
+  const localBy = new Map(local.map((slot) => [slot.slot, slot]));
+  const remoteBy = new Map(remote.map((slot) => [slot.slot, slot]));
+  for (const slot of saveSlots) {
+    const here = localBy.get(slot);
+    const there = remoteBy.get(slot);
+    if (there && there.sha1 !== game.sha1) {
+      if (here && here.savedAt > there.savedAt) await pushSlot(game, slot, here);
+      continue;
+    }
+    if (there && (!here || there.savedAt > here.savedAt)) {
+      const state = await downloadSave(game.id, slot);
+      const shot = await downloadShot(game.id, slot);
+      await saveState(game.id, slot, state, shot ?? here?.shot ?? null, here?.origin ?? "local", there.savedAt);
+    } else if (here && (!there || here.savedAt > there.savedAt)) {
+      await pushSlot(game, slot, here);
+    }
+  }
+  return saveList(game.id);
+}
+
 async function openSaves() {
   if (!loadedGame || !worker) {
     setBanner("Solte a ROM antes de abrir os saves.");
     return;
   }
-  paintSlots(loadedGame, await saveList(loadedGame.id));
+  paintSlots(loadedGame, await slotsFor(loadedGame));
   reveal(savesModal, "modal");
   document.querySelector<HTMLButtonElement>("#saves-close")?.focus();
 }
@@ -740,7 +827,23 @@ async function writeSlot(game: Game, slot: number) {
     const saved = await askSave();
     const origin = session ? "online" : "local";
     await saveState(game.id, slot, saved.state, saved.shot, origin);
-    setBanner(saved.shot ? `Save ${slot} gravado, com o print da tela.` : `Save ${slot} gravado, sem o print da tela.`);
+    let cloud = false;
+    if (account) {
+      try {
+        const savedAt = await uploadSave(game.id, slot, game.sha1, saved.state, saved.shot);
+        await saveState(game.id, slot, saved.state, saved.shot, origin, savedAt);
+        cloud = true;
+      } catch (error) {
+        if (error instanceof AccountError && error.status === 401) {
+          account = null;
+          paintAccount();
+        }
+      }
+    }
+    const shotNote = saved.shot ? "com o print da tela" : "sem o print da tela";
+    if (cloud) setBanner(`Save ${slot} gravado na conta, ${shotNote}.`);
+    else if (account) setBanner(`Save ${slot} gravado neste navegador. A nuvem não respondeu.`);
+    else setBanner(`Save ${slot} gravado, ${shotNote}.`);
     await renderSaves();
   } catch (error) {
     setBanner(error instanceof Error ? error.message : "Não deu para gravar o save.");
@@ -778,9 +881,11 @@ async function readSlot(game: Game, slot: number, savedAt: number) {
 }
 
 async function connect(role: Role, code: string) {
-  nick = nickInput.value.replace(/\s+/g, " ").trim().slice(0, 20);
-  nickInput.value = nick;
-  void setPlayerName(nick);
+  if (!account) {
+    nick = nickInput.value.replace(/\s+/g, " ").trim().slice(0, 20);
+    nickInput.value = nick;
+    void setPlayerName(nick);
+  }
   await booting;
   if (!loadedGame || loadedGame.id !== selected.id) {
     if (!session) roomState.textContent = "Partida local. A sala leva o outro controle para outra casa.";
@@ -863,6 +968,7 @@ async function connect(role: Role, code: string) {
       hideBubble(1);
       renderPeople();
       worker?.postMessage({ t: "local" });
+      dropHostedRoom();
       setBanner(reason);
     },
     onChat: (line) => {
@@ -888,7 +994,7 @@ async function connect(role: Role, code: string) {
       showConfirm(`${offer.name} quer carregar o save de ${offer.label} nos dois.`, "both");
     },
     onSaveAnswer: (id, yes) => {
-      if (session !== mine || !saveDialog || saveDialog.id !== id) return;
+      if (session !== mine || !saveDialog || saveDialog.kind === "offer" || saveDialog.id !== id) return;
       if (saveDialog.kind === "incoming") {
         if (yes) return;
         hideConfirm();
@@ -910,9 +1016,11 @@ async function connect(role: Role, code: string) {
   session = mine;
   setRoomCode(code);
   shown(leaveButton, true, "left");
-  mine.setProfile(localControl(), nick);
+  const name = roomName();
+  mine.setProfile(localControl(), name);
   setChatEnabled(true);
-  sentProfile = `${localControl()}\n${nick}`;
+  sentProfile = `${localControl()}\n${name}`;
+  const previousRoom = hostedCode;
   try {
     await session.open();
   } catch (error) {
@@ -920,7 +1028,15 @@ async function connect(role: Role, code: string) {
     shown(leaveButton, false, "left");
     setChatEnabled(false);
     setRoomCode(null);
+    if (account && previousRoom) void queueRoom(null);
     setBanner(error instanceof Error ? error.message : "Não foi possível abrir a sala.");
+    return;
+  }
+  if (!account) return;
+  try {
+    await queueRoom(role === "host" ? code : null);
+  } catch {
+    setBanner("A sala abriu, mas os amigos não viram o código.");
   }
 }
 
@@ -971,15 +1087,234 @@ function localControl(): string {
   return first ?? "Teclado";
 }
 
+function roomName(): string {
+  if (!account) return nick;
+  return account.name.replace(/\s+/g, " ").trim().slice(0, 20);
+}
+
 function publishProfile() {
-  nick = nickInput.value.replace(/\s+/g, " ").trim().slice(0, 20);
+  if (!account) nick = nickInput.value.replace(/\s+/g, " ").trim().slice(0, 20);
+  const name = roomName();
+  if (account) nickInput.value = name;
   if (!session) return;
   const control = localControl();
-  const next = `${control}\n${nick}`;
+  const next = `${control}\n${name}`;
   if (next === sentProfile) return;
   sentProfile = next;
-  session.setProfile(control, nick);
+  session.setProfile(control, name);
 }
+
+function dropHostedRoom() {
+  if (!hostedCode || !account) {
+    hostedCode = null;
+    return;
+  }
+  void queueRoom(null);
+}
+
+function joinCode(raw: string) {
+  const code = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!/^[A-HJ-NP-Z2-9]{5}$/.test(code)) {
+    setBanner("O código tem 5 letras, sem I, O, 0 ou 1.");
+    return;
+  }
+  codeInput.value = code;
+  void connect("guest", code);
+}
+
+function paintAccount() {
+  const logged = Boolean(account);
+  accountOut.hidden = logged;
+  accountIn.hidden = !logged;
+  friendsSection.hidden = !logged;
+  savesCloud.hidden = !logged;
+  nickInput.disabled = logged;
+  if (account) {
+    accountName.textContent = account.name;
+    accountCode.textContent = account.friendCode;
+    nickInput.value = roomName();
+    if (account.hasAvatar) {
+      accountAvatar.hidden = false;
+      accountAvatar.src = `/api/me/avatar?v=${encodeURIComponent(account.id)}`;
+    } else {
+      accountAvatar.hidden = true;
+      accountAvatar.removeAttribute("src");
+    }
+  } else {
+    nickInput.value = nick;
+    friendList.replaceChildren();
+  }
+  peopleKey = "";
+  renderPeople();
+  if (session) publishProfile();
+}
+
+async function refreshAccount() {
+  try {
+    account = await fetchAccount();
+  } catch {
+    account = null;
+  }
+  paintAccount();
+  const params = new URLSearchParams(location.search);
+  if (params.get("login") === "falhou") {
+    setBanner("Não deu para entrar. Tente de novo.");
+    params.delete("login");
+    const next = params.toString();
+    history.replaceState(null, "", next ? `${location.pathname}?${next}` : location.pathname);
+  }
+}
+
+function friendCard(friend: FriendCard, pending: "in" | "out" | null) {
+  const card = document.createElement("article");
+  card.className = "friend-card";
+  const who = document.createElement("div");
+  who.className = "friend-who";
+  if (friend.hasAvatar) {
+    const photo = document.createElement("img");
+    photo.src = `/api/avatars/${friend.id}`;
+    photo.alt = "";
+    photo.width = 36;
+    photo.height = 36;
+    who.append(photo);
+  }
+  const text = document.createElement("span");
+  const name = document.createElement("b");
+  name.textContent = friend.name;
+  const meta = document.createElement("small");
+  meta.textContent = pending === "in" ? "quer ser seu amigo" : pending === "out" ? "pedido enviado" : friend.friendCode;
+  text.append(name, meta);
+  who.append(text);
+  const actions = document.createElement("div");
+  actions.className = "friend-actions";
+  if (pending === "in") {
+    const yes = document.createElement("button");
+    yes.type = "button";
+    yes.textContent = "Aceitar";
+    yes.addEventListener("click", () => void changeFriend(() => acceptFriend(friend.id), "Pedido aceito."));
+    const no = document.createElement("button");
+    no.type = "button";
+    no.textContent = "Recusar";
+    no.addEventListener("click", () => void changeFriend(() => declineFriend(friend.id), "Pedido recusado."));
+    actions.append(yes, no);
+  } else if (pending === "out") {
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "Cancelar";
+    cancel.addEventListener("click", () => void changeFriend(() => removeFriend(friend.id), "Pedido cancelado."));
+    actions.append(cancel);
+  } else {
+    if (friend.roomCode) {
+      const join = document.createElement("button");
+      join.type = "button";
+      join.textContent = `Sala ${friend.roomCode}`;
+      join.addEventListener("click", () => joinCode(friend.roomCode!));
+      actions.append(join);
+    }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Remover";
+    remove.addEventListener("click", () => void changeFriend(() => removeFriend(friend.id), `${friend.name} saiu da lista.`));
+    actions.append(remove);
+  }
+  card.append(who, actions);
+  return card;
+}
+
+async function changeFriend(action: () => Promise<void>, done: string) {
+  try {
+    await action();
+    setBanner(done);
+    await paintFriends();
+  } catch (error) {
+    if (error instanceof AccountError && error.status === 401) {
+      account = null;
+      paintAccount();
+    }
+    setBanner(error instanceof Error ? error.message : "Não deu para atualizar os amigos.");
+  }
+}
+
+async function paintFriends() {
+  if (!account) {
+    friendList.replaceChildren();
+    return;
+  }
+  let lists;
+  try {
+    lists = await loadFriends();
+  } catch (error) {
+    if (error instanceof AccountError && error.status === 401) {
+      account = null;
+      paintAccount();
+    }
+    return;
+  }
+  friendList.replaceChildren();
+  const blocks = [
+    ...lists.incoming.map((friend) => ({ friend, pending: "in" as const })),
+    ...lists.outgoing.map((friend) => ({ friend, pending: "out" as const })),
+    ...lists.friends.map((friend) => ({ friend, pending: null })),
+  ];
+  if (blocks.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "note";
+    empty.textContent = "Nenhum amigo ainda. Manda o seu código.";
+    friendList.append(empty);
+    return;
+  }
+  for (const block of blocks) friendList.append(friendCard(block.friend, block.pending));
+}
+
+accountCode.addEventListener("click", () => {
+  const code = account?.friendCode;
+  if (!code) return;
+  const done = () => setBanner("Código de amigo copiado.");
+  if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(code).then(done, done);
+  else done();
+});
+
+logoutButton.addEventListener("click", () => {
+  void (async () => {
+    try {
+      await logoutAccount();
+    } catch {
+      /* o cookie pode já ter saído */
+    }
+    account = null;
+    hostedCode = null;
+    paintAccount();
+    setBanner("Você saiu da conta. O nome da sala volta a ser o deste navegador.");
+  })();
+});
+
+friendForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const code = friendCodeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  friendCodeInput.value = code;
+  if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code)) {
+    setBanner("O código de amigo tem 6 letras, sem I, O, 0 ou 1.");
+    return;
+  }
+  void (async () => {
+    try {
+      const status = await askFriend(code);
+      friendCodeInput.value = "";
+      setBanner(status === "accepted" ? "Pedido aceito." : "Pedido enviado.");
+      await paintFriends();
+    } catch (error) {
+      if (error instanceof AccountError && error.status === 401) {
+        account = null;
+        paintAccount();
+      }
+      setBanner(error instanceof Error ? error.message : "Não deu para pedir amizade.");
+    }
+  })();
+});
+
+window.addEventListener("focus", () => {
+  if (account) void paintFriends();
+});
 
 drop.addEventListener("dragover", (event) => event.preventDefault());
 drop.addEventListener("drop", (event) => {
@@ -1033,14 +1368,7 @@ copyButton.addEventListener("click", () => {
   done();
 });
 
-document.querySelector("#join")!.addEventListener("click", () => {
-  const code = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  if (!/^[A-HJ-NP-Z2-9]{5}$/.test(code)) {
-    setBanner("O código tem 5 letras, sem I, O, 0 ou 1.");
-    return;
-  }
-  void connect("guest", code);
-});
+document.querySelector("#join")!.addEventListener("click", () => joinCode(codeInput.value));
 
 chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1079,6 +1407,7 @@ function leaveRoom() {
   worker?.postMessage({ t: "local" });
   roomState.textContent = "Partida local. A sala leva o outro controle para outra casa.";
   setDelay("");
+  dropHostedRoom();
   renderPeople();
   setBanner("Você saiu da sala.");
 }
@@ -1095,7 +1424,10 @@ function setRoom(open: boolean) {
   panel.inert = roomDrawer() && !visible;
   roomBackdrop.hidden = !visible;
   roomOpen.setAttribute("aria-expanded", visible ? "true" : "false");
-  if (visible) roomClose.focus();
+  if (visible) {
+    roomClose.focus();
+    if (account) void paintFriends();
+  }
 }
 
 roomOpen.addEventListener("click", () => setRoom(true));
@@ -1263,7 +1595,9 @@ function openAlert(mode: AlertMode, name = "") {
   alertMode = mode;
   alertYes.hidden = mode === "reset-wait";
   if (mode === "forget") {
-    alertText.textContent = `A ROM e os saves de ${selected.title} saem deste navegador. A partida para. Não tem como desfazer.`;
+    alertText.textContent = account
+      ? `A ROM e os saves de ${selected.title} saem deste navegador. A cópia na conta continua. A partida para.`
+      : `A ROM e os saves de ${selected.title} saem deste navegador. A partida para. Não tem como desfazer.`;
     alertYes.textContent = "Esquecer";
   } else if (mode === "reset-local") {
     alertText.textContent = "Reiniciar o jogo agora? Ele volta para o começo.";
@@ -1407,6 +1741,15 @@ booting = (async () => {
     ready = new Set(await storedGames());
     nick = await playerName();
     nickInput.value = nick;
+    await refreshAccount();
+    if (account) {
+      try {
+        await queueRoom(null);
+      } catch {
+        /* a sala antiga deixa de aparecer na próxima visita */
+      }
+      void paintFriends();
+    }
     peopleKey = "";
     renderPeople();
     const last = await lastGame();

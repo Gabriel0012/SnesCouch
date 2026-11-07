@@ -1,25 +1,15 @@
 import catalog from "../../../packages/catalog/games.json";
+import { ROOM_CODE } from "./codes";
+import type { Env } from "./env";
+import { baseHeaders } from "./http";
 import { Room } from "./room";
+import { routeAccount } from "./routes";
 
+export type { Env };
 export { Room };
 
-export interface Env {
-  ROOMS: DurableObjectNamespace;
-  ASSETS?: Fetcher;
-  TURN_URL?: string;
-  TURN_USERNAME?: string;
-  TURN_CREDENTIAL?: string;
-}
-
-const CODE = /^[A-HJ-NP-Z2-9]{5}$/;
-
 function headers(extra?: HeadersInit) {
-  return {
-    "Cross-Origin-Opener-Policy": "same-origin",
-    "Cross-Origin-Embedder-Policy": "require-corp",
-    "Cross-Origin-Resource-Policy": "same-origin",
-    ...Object.fromEntries(new Headers(extra)),
-  };
+  return Object.fromEntries(baseHeaders(extra));
 }
 
 function ice(env: Env) {
@@ -39,6 +29,8 @@ function ice(env: Env) {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const account = await routeAccount(request, env);
+    if (account) return account;
     if (url.pathname === "/api/health") {
       return Response.json({ ok: true, games: catalog.games.length }, { headers: headers() });
     }
@@ -47,7 +39,7 @@ export default {
     }
     const match = url.pathname.match(/^\/api\/rooms\/([A-HJ-NP-Z2-9]{5})$/);
     if (match) {
-      if (!CODE.test(match[1])) return new Response("Código inválido.", { status: 400, headers: headers() });
+      if (!ROOM_CODE.test(match[1])) return new Response("Código inválido.", { status: 400, headers: headers() });
       const id = env.ROOMS.idFromName(match[1]);
       const room = env.ROOMS.get(id);
       return room.fetch(request);

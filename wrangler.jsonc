@@ -14,5 +14,20 @@
   "durable_objects": {
     "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  // `wrangler d1 create snes-couch` e cole o database_id antes de publicar.
+  // `wrangler r2 bucket create snes-couch-saves`
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "snes-couch",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "SAVES",
+      "bucket_name": "snes-couch-saves"
+    }
+  ]
 }

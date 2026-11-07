@@ -195,7 +195,14 @@ export function forgetRom(gameId: string) {
   });
 }
 
-export function saveState(gameId: string, slot: number, state: Uint8Array, shot: Uint8Array | null, origin: SaveOrigin) {
+export function saveState(
+  gameId: string,
+  slot: number,
+  state: Uint8Array,
+  shot: Uint8Array | null,
+  origin: SaveOrigin,
+  savedAt = Date.now(),
+) {
   return enqueue(async () => {
     const database = await db();
     database.run(
@@ -205,7 +212,7 @@ export function saveState(gameId: string, slot: number, state: Uint8Array, shot:
          saved_at = excluded.saved_at,
          shot = excluded.shot,
          origin = excluded.origin`,
-      [gameId, slot, state, Date.now(), shot, origin],
+      [gameId, slot, state, savedAt, shot, origin],
     );
     await persist(database);
   });

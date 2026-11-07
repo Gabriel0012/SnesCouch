@@ -767,6 +767,68 @@ button[disabled] { cursor: default; }
 #chat-text { flex: 1; min-width: 0; }
 .nick { display: grid; gap: 0.3rem; margin: 0 0 0.55rem; }
 #nick { width: 100%; }
+#nick:disabled { color: var(--muted); }
+#account-out, #account-in { display: grid; gap: 0.55rem; margin: 0 0 0.75rem; }
+#account-out[hidden], #account-in[hidden], #friends[hidden], #saves-cloud[hidden] { display: none !important; }
+a.login {
+  display: grid;
+  place-items: center;
+  width: 3.15rem;
+  height: 3.15rem;
+  padding: 0.28rem;
+  text-decoration: none;
+  cursor: pointer;
+  background: var(--ink);
+  box-shadow: inset -3px -3px 0 #111, inset 3px 3px 0 #4a4f5a, 3px 3px 0 #000;
+}
+a.login img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+a.login:active { transform: translate(2px, 2px); box-shadow: inset -3px -3px 0 #111, inset 3px 3px 0 #4a4f5a; }
+.account-who { display: flex; gap: 0.55rem; align-items: center; }
+.account-who img, .friend-card img {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  background: var(--ink);
+  box-shadow: 3px 3px 0 #000;
+}
+.account-who b, .friend-card b { display: block; color: var(--y); }
+.account-who small, .friend-card small { color: var(--muted); }
+#account-code {
+  background: transparent;
+  color: var(--b);
+  box-shadow: none;
+  padding: 0;
+  letter-spacing: 0.12em;
+}
+#account-code:active { transform: none; box-shadow: none; }
+#logout {
+  justify-self: start;
+  background: var(--well);
+  color: var(--body);
+  box-shadow: inset -3px -3px 0 #111, inset 3px 3px 0 #4a4f5a, 3px 3px 0 #000;
+}
+#logout:active { box-shadow: inset -3px -3px 0 #111, inset 3px 3px 0 #4a4f5a; }
+#friend-add { margin-bottom: 0.65rem; }
+#friend-code {
+  flex: 1;
+  min-width: 0;
+  color: #f6f3ea;
+  background: var(--ink);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  box-shadow: inset -3px -3px 0 #111, inset 3px 3px 0 #4a4f5a;
+}
+.friend-card { display: grid; gap: 0.35rem; }
+.friend-card + .friend-card { margin-top: 0.75rem; }
+.friend-who { display: flex; gap: 0.5rem; align-items: center; }
+.friend-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.friend-actions button { padding: 0.3rem 0.45rem; }
+#saves-cloud { margin: 0 0 0.75rem; }
 
 .people, .keys { margin: 0; }
 .people { list-style: none; padding: 0; }
