@@ -1,4 +1,4 @@
-import { assignPlayers, padLabel, snesBits, type PadLike } from "./pads.ts";
+import { assignPlayers, padLabel, snesBits, superPressed, type PadLike } from "./pads.ts";
 
 const B = 1 << 0;
 const Y = 1 << 1;
@@ -17,7 +17,7 @@ const PLAYER_KEYS = [
   {
     ArrowUp: UP, ArrowDown: DOWN, ArrowLeft: LEFT, ArrowRight: RIGHT,
     KeyZ: B, KeyX: Y, KeyA: A, KeyS: X, KeyQ: L, KeyW: R,
-    Enter: START, ShiftLeft: SELECT,
+    Space: START, ShiftLeft: SELECT,
   },
   {
     KeyI: UP, KeyK: DOWN, KeyJ: LEFT, KeyL: RIGHT,
@@ -28,11 +28,14 @@ const PLAYER_KEYS = [
 
 const down = new Set<string>();
 
+function typing(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+}
+
 window.addEventListener("keydown", (event) => {
+  if (typing(event.target)) return;
   down.add(event.code);
-  if (event.code.startsWith("Arrow") || event.code === "Enter" || event.code === "Space") {
-    event.preventDefault();
-  }
+  if (event.code.startsWith("Arrow") || event.code === "Space") event.preventDefault();
 });
 window.addEventListener("keyup", (event) => down.delete(event.code));
 window.addEventListener("blur", () => down.clear());
@@ -50,13 +53,19 @@ function livePads(): [PadLike | null, PadLike | null] {
   return assignPlayers([...pads]);
 }
 
+const SUPER_KEYS = ["KeyF", "Semicolon"] as const;
+
+export function readSupers(): [boolean, boolean] {
+  if (!document.hasFocus() || typing(document.activeElement)) return [false, false];
+  const [first, second] = livePads();
+  return [down.has(SUPER_KEYS[0]) || superPressed(first), down.has(SUPER_KEYS[1]) || superPressed(second)];
+}
+
 export function readPads(): [number, number] {
   if (!document.hasFocus()) return [0, 0];
   const [first, second] = livePads();
-  return [
-    fromKeys(PLAYER_KEYS[0]) | snesBits(first),
-    fromKeys(PLAYER_KEYS[1]) | snesBits(second),
-  ];
+  const keys: [number, number] = typing(document.activeElement) ? [0, 0] : [fromKeys(PLAYER_KEYS[0]), fromKeys(PLAYER_KEYS[1])];
+  return [keys[0] | snesBits(first), keys[1] | snesBits(second)];
 }
 
 export function padStatus(): [string | null, string | null] {

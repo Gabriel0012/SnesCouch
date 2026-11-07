@@ -1,8 +1,9 @@
 import { Speaker } from "./audio.ts";
 import { kindFromLabel, padIcon } from "./icons.ts";
-import { padStatus, readPads } from "./input.ts";
+import { padStatus, readPads, readSupers } from "./input.ts";
 import { games, matchRom, type Game } from "./rom.ts";
 import { OnlineSession, type ChatLine, type Role, type Seat } from "./session.ts";
+import { FIGHTERS, LEFT, RIGHT, SELECT, fighterLabel, superSteps, type Fighter } from "./supers.ts";
 import { forgetRom, lastGame, loadRom, loadState, playerName, saveList, saveRom, saveSlots, saveState, setPlayerName, storedGames } from "./store.ts";
 
 const pick = document.querySelector<HTMLElement>("#pick")!;
@@ -21,6 +22,12 @@ const log = document.querySelector<HTMLElement>("#log")!;
 const chatForm = document.querySelector<HTMLFormElement>("#chat")!;
 const chatInput = document.querySelector<HTMLInputElement>("#chat-text")!;
 const chatButton = chatForm.querySelector("button")!;
+const leaveButton = document.querySelector<HTMLButtonElement>("#leave")!;
+const picture = document.querySelector<HTMLElement>("#picture")!;
+const bubbles = [
+  document.querySelector<HTMLElement>('.bubble[data-slot="0"]')!,
+  document.querySelector<HTMLElement>('.bubble[data-slot="1"]')!,
+] as const;
 const saves = document.querySelector<HTMLElement>("#saves")!;
 const copyButton = document.querySelector<HTMLButtonElement>("#copy")!;
 const volButton = document.querySelector<HTMLButtonElement>("#vol")!;
@@ -114,7 +121,10 @@ function stopPlay() {
   pads = null;
   loadedGame = null;
   screen.hidden = true;
+  picture.hidden = true;
   drop.hidden = false;
+  hideBubble(0);
+  hideBubble(1);
   if (transferred) replaceScreen();
   renderSaves();
 }
@@ -177,6 +187,7 @@ async function boot(game: Game, rom: Uint8Array) {
   loadedGame = game;
   selected = game;
   drop.hidden = true;
+  picture.hidden = false;
   screen.hidden = false;
   setBanner("");
   roomState.textContent = `${game.title} nesta máquina. Os dois teclados jogam aqui.`;
@@ -207,6 +218,7 @@ function onWorker(message: {
   hash?: number;
   state?: ArrayBuffer;
   message?: string;
+  spots?: { x: number; y: number }[];
 }) {
   if (message.t === "loaded" && message.rate) speaker.setRate(message.rate);
   if (message.t === "audio" && message.samples && message.rate) {
@@ -231,6 +243,7 @@ function onWorker(message: {
     saveWait = null;
   }
   if (message.t === "restored") setBanner("Save carregado.");
+  if (message.t === "places" && message.spots) placeBubbles(message.spots);
   if (message.t === "error") setBanner(message.message ?? "Falha no núcleo.");
 }
 
@@ -283,11 +296,92 @@ function clearChat() {
   log.replaceChildren();
 }
 
+const anchor: [{ x: number; y: number }, { x: number; y: number }] = [
+  { x: 0.32, y: 0.52 },
+  { x: 0.68, y: 0.52 },
+];
+const bubbleMode: ("off" | "text" | "typing")[] = ["off", "off"];
+const bubbleTimer = [0, 0];
+const fighters: Fighter[] = ["haggar", "haggar"];
+const facing: [number, number] = [RIGHT, RIGHT];
+const superDown = [false, false];
+let typingIdle = 0;
+let typingSent = false;
+
+function mix(from: { x: number; y: number }, to: { x: number; y: number }) {
+  return { x: from.x + (to.x - from.x) * 0.35, y: from.y + (to.y - from.y) * 0.35 };
+}
+
+function placeBubbles(peaks: { x: number; y: number }[]) {
+  const separated = peaks.filter((peak, index) => peaks.findIndex((other) => Math.abs(other.x - peak.x) < 0.12) === index);
+  if (separated.length >= 2) {
+    const ordered = [...separated].sort((a, b) => a.x - b.x).slice(0, 2);
+    const direct = Math.hypot(ordered[0].x - anchor[0].x, ordered[0].y - anchor[0].y) + Math.hypot(ordered[1].x - anchor[1].x, ordered[1].y - anchor[1].y);
+    const swapped = Math.hypot(ordered[1].x - anchor[0].x, ordered[1].y - anchor[0].y) + Math.hypot(ordered[0].x - anchor[1].x, ordered[0].y - anchor[1].y);
+    const next = swapped + 0.08 < direct ? [ordered[1], ordered[0]] : ordered;
+    anchor[0] = mix(anchor[0], next[0]);
+    anchor[1] = mix(anchor[1], next[1]);
+  } else if (separated.length === 1) {
+    const slot = Math.abs(separated[0].x - anchor[0].x) <= Math.abs(separated[0].x - anchor[1].x) ? 0 : 1;
+    anchor[slot] = mix(anchor[slot], separated[0]);
+  }
+  for (const slot of [0, 1] as const) {
+    bubbles[slot].style.left = `${anchor[slot].x * 100}%`;
+    bubbles[slot].style.top = `${anchor[slot].y * 100}%`;
+  }
+}
+
+function hideBubble(slot: 0 | 1) {
+  window.clearTimeout(bubbleTimer[slot]);
+  bubbleMode[slot] = "off";
+  bubbles[slot].hidden = true;
+  bubbles[slot].replaceChildren();
+}
+
+function showBubble(slot: 0 | 1, mode: "text" | "typing", text = "") {
+  const bubble = bubbles[slot];
+  window.clearTimeout(bubbleTimer[slot]);
+  bubbleMode[slot] = mode;
+  bubble.hidden = false;
+  bubble.replaceChildren();
+  if (mode === "typing") {
+    const dots = document.createElement("span");
+    dots.className = "dots";
+    dots.setAttribute("aria-label", "digitando");
+    for (let i = 0; i < 3; i++) dots.append(document.createElement("i"));
+    bubble.append(dots);
+    return;
+  }
+  bubble.textContent = text;
+  bubbleTimer[slot] = window.setTimeout(() => hideBubble(slot), 4500);
+}
+
+function setTyping(slot: 0 | 1, on: boolean) {
+  if (on) {
+    showBubble(slot, "typing");
+    return;
+  }
+  if (bubbleMode[slot] === "typing") hideBubble(slot);
+}
+
+function mySlot(): 0 | 1 {
+  return session?.role === "guest" ? 1 : 0;
+}
+
+function localTyping(on: boolean) {
+  if (!session) return;
+  setTyping(mySlot(), on);
+  if (typingSent === on) return;
+  typingSent = on;
+  session.sendTyping(on);
+}
+
 function pushChat(line: ChatLine) {
   const row = document.createElement("p");
   row.className = "chat-line";
   const who = document.createElement("b");
-  who.textContent = line.name || (line.from === "host" ? "Anfitrião" : "Convidado");
+  const name = line.name?.trim();
+  who.textContent = name || (line.from === "host" ? "Anfitrião" : "Convidado");
   row.append(who, document.createTextNode(` ${line.text}`));
   log.append(row);
   log.scrollTop = log.scrollHeight;
@@ -448,11 +542,20 @@ async function connect(role: Role, code: string) {
       session = null;
       roster = null;
       setChatEnabled(false);
+      leaveButton.hidden = true;
+      typingSent = false;
+      hideBubble(0);
+      hideBubble(1);
       renderPeople();
       worker?.postMessage({ t: "local" });
       setBanner(reason);
     },
-    onChat: (line) => pushChat(line),
+    onChat: (line) => {
+      pushChat(line);
+      showBubble(line.from === "host" ? 0 : 1, "text", line.text);
+      if (line.from === mine.role) typingSent = false;
+    },
+    onTyping: (from, on) => setTyping(from === "host" ? 0 : 1, on),
     onChatLog: (lines) => {
       clearChat();
       for (const line of lines) pushChat(line);
@@ -464,6 +567,7 @@ async function connect(role: Role, code: string) {
     checkpoint: askCheckpoint,
   });
   session = mine;
+  leaveButton.hidden = false;
   mine.setProfile(localControl(), nick);
   setChatEnabled(true);
   sentProfile = `${localControl()}\n${nick}`;
@@ -471,6 +575,7 @@ async function connect(role: Role, code: string) {
     await session.open();
   } catch (error) {
     if (session === mine) session = null;
+    leaveButton.hidden = true;
     setChatEnabled(false);
     setBanner(error instanceof Error ? error.message : "Não foi possível abrir a sala.");
   }
@@ -600,7 +705,59 @@ chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const text = chatInput.value;
   chatInput.value = "";
+  window.clearTimeout(typingIdle);
+  localTyping(false);
   session?.sendChat(text);
+});
+
+chatInput.addEventListener("input", () => {
+  if (!chatInput.value.trim()) {
+    window.clearTimeout(typingIdle);
+    localTyping(false);
+    return;
+  }
+  localTyping(true);
+  window.clearTimeout(typingIdle);
+  typingIdle = window.setTimeout(() => localTyping(false), 800);
+});
+
+function leaveRoom() {
+  const current = session;
+  if (!current) return;
+  session = null;
+  current.close();
+  roster = null;
+  setChatEnabled(false);
+  leaveButton.hidden = true;
+  typingSent = false;
+  clearChat();
+  hideBubble(0);
+  hideBubble(1);
+  worker?.postMessage({ t: "local" });
+  roomState.textContent = "Partida local. A sala leva o outro controle para outra casa.";
+  delayLabel.textContent = "";
+  renderPeople();
+  setBanner("Você saiu da sala.");
+}
+
+leaveButton.addEventListener("click", () => leaveRoom());
+
+chatInput.addEventListener("keydown", (event) => {
+  if (event.code !== "Enter" || event.repeat || event.shiftKey) return;
+  event.preventDefault();
+  chatForm.requestSubmit();
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.code !== "Enter" || event.repeat) return;
+  const target = event.target;
+  if (target instanceof HTMLElement) {
+    const tag = target.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON" || tag === "A" || tag === "SUMMARY" || target.isContentEditable) return;
+  }
+  if (chatInput.disabled) return;
+  event.preventDefault();
+  chatInput.focus();
 });
 
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-zoom]")) {
@@ -659,11 +816,33 @@ function writePads(p0: number, p1: number) {
   pads[1] = p1;
 }
 
+function pollSupers(padsNow: [number, number]) {
+  if (loadedGame?.id !== "final-fight-3" || !worker) return;
+  const [first, second] = readSupers();
+  const pressed: [boolean, boolean] = session ? [first, false] : [first, second];
+  for (const port of [0, 1] as const) {
+    if (padsNow[port] & LEFT) facing[port] = LEFT;
+    else if (padsNow[port] & RIGHT) facing[port] = RIGHT;
+    if (pressed[port] && !superDown[port]) {
+      if (padsNow[port] & SELECT) {
+        const next = (FIGHTERS.indexOf(fighters[port]) + 1) % FIGHTERS.length;
+        fighters[port] = FIGHTERS[next];
+        setBanner(`Super do jogador ${port + 1}: ${fighterLabel(fighters[port])}.`);
+      } else {
+        const forward = padsNow[port] & LEFT ? LEFT : padsNow[port] & RIGHT ? RIGHT : facing[port];
+        worker.postMessage({ t: "super", port, steps: superSteps(fighters[port], forward) });
+      }
+    }
+    superDown[port] = pressed[port];
+  }
+}
+
 window.addEventListener("blur", () => writePads(0, 0));
 
 function pump() {
-  const [p0, p1] = readPads();
-  writePads(p0, p1);
+  const padsNow = readPads();
+  writePads(padsNow[0], padsNow[1]);
+  pollSupers(padsNow);
   if (session) publishProfile();
   renderPeople();
   requestAnimationFrame(pump);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assignPlayers, hatBits, padLabel, snesBits, type PadLike } from "../apps/web/src/pads.ts";
+import { assignPlayers, hatBits, padLabel, snesBits, superPressed, type PadLike } from "../apps/web/src/pads.ts";
 
 const B = 1 << 0;
 const Y = 1 << 1;
@@ -109,6 +109,24 @@ test("iBuffalo clássico segue o próprio mapa", () => {
     axes: [0, -1],
   });
   assert.equal(snesBits(buffalo), A | R | START | UP);
+});
+
+test("R2 dispara o super e não segura o R do Super Nintendo", () => {
+  const xbox = pad({
+    id: "Xbox Series Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b12)",
+    mapping: "standard",
+    buttons: hold([5, 7]),
+    axes: [0, 0, 0, 0],
+  });
+  assert.equal(snesBits(xbox) & R, R);
+  assert.equal(superPressed(xbox), true);
+  const ps4 = pad({
+    id: "Wireless Controller (Vendor: 054c Product: 09cc)",
+    buttons: hold([]),
+    axes: [0, 0, 0, 0, 0.9],
+  });
+  assert.equal(snesBits(ps4) & R, 0);
+  assert.equal(superPressed(ps4), true);
 });
 
 test("dois controles ocupam jogador 1 e jogador 2, pulando buraco", () => {

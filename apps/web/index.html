@@ -24,7 +24,13 @@
             <small>O arquivo fica neste navegador. Só entra se o SHA-1 for o da versão USA.</small>
             <input id="file" type="file" accept=".sfc,.smc,application/octet-stream" hidden />
           </label>
-          <canvas id="screen" width="256" height="224" hidden></canvas>
+          <div id="picture" hidden>
+            <canvas id="screen" width="256" height="224" hidden></canvas>
+            <div id="bubbles">
+              <p class="bubble" data-slot="0" hidden></p>
+              <p class="bubble" data-slot="1" hidden></p>
+            </div>
+          </div>
         </div>
         <div class="toolbar">
           <div class="cluster" role="group" aria-label="Tamanho da tela">
@@ -73,6 +79,7 @@
               <button id="copy" type="button">Copiar</button>
             </div>
             <button id="join" type="button">Entrar</button>
+            <button id="leave" type="button" hidden>Sair da sala</button>
           </div>
           <p id="delay"></p>
         </section>
@@ -91,10 +98,10 @@
         <details>
           <summary>Teclado</summary>
           <ul class="keys">
-            <li><b>Jogador 1</b> setas, Z B, X Y, A A, S X, Q L, W R, Enter Start, Shift esquerdo Select</li>
-            <li><b>Jogador 2</b> I J K L, N B, M Y, G A, H X, U L, O R, P Start, V Select</li>
+            <li><b>Jogador 1</b> setas, Z B, X Y, A A, S X, Q L, W R, Espaço Start, Shift esquerdo Select, F Super. Enter abre a conversa.</li>
+            <li><b>Jogador 2</b> I J K L, N B, M Y, G A, H X, U L, O R, P Start, V Select, ; Super</li>
           </ul>
-          <p class="note">Xbox, PS4, PS5, Super Nintendo, fliperama e USB genérico também entram. O de baixo é o B. No online, cada pessoa usa o próprio controle.</p>
+          <p class="note">Xbox, PS4, PS5, Super Nintendo, fliperama e USB genérico também entram. O de baixo é o B. No online, cada pessoa usa o próprio controle. No Final Fight 3, F ou R2 solta o super. Shift+F (jogador 2: V+;) troca Haggar/Guy, Lucia e Dean. Haggar, Guy e Dean precisam estar segurando o inimigo.</p>
         </details>
       </aside>
     </div>

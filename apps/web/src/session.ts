@@ -49,6 +49,7 @@ interface SessionOptions {
   onReset: (net: { slot: 0 | 1; delay: number } | null) => void;
   onChat: (line: ChatLine) => void;
   onChatLog: (lines: ChatLine[]) => void;
+  onTyping: (from: Role, on: boolean) => void;
   onRoster: (roster: { host: Seat; guest: Seat }) => void;
   checkpoint: () => Promise<Snapshot>;
 }
@@ -121,6 +122,10 @@ export class OnlineSession {
     this.socketSend({ t: "chat", text: trimmed });
   }
 
+  sendTyping(on: boolean) {
+    this.socketSend({ t: "typing", on });
+  }
+
   requestReset() {
     if (this.closed) return;
     if (this.channel?.readyState === "open" && this.started) {
@@ -178,17 +183,27 @@ export class OnlineSession {
         t?: string;
         data?: Signal;
         from?: Role;
+        name?: string;
         text?: string;
         at?: number;
         messages?: ChatLine[];
         host?: Seat;
         guest?: Seat;
+        on?: boolean;
       };
       if (message.t === "peer") void this.attachPeer();
       if (message.t === "peer-left") this.onPeerLeft();
       if (message.t === "signal" && message.data) void this.onSignal(message.data);
+      if (message.t === "typing" && (message.from === "host" || message.from === "guest")) {
+        this.opts.onTyping(message.from, message.on === true);
+      }
       if (message.t === "chat" && message.from && message.text) {
-        this.opts.onChat({ from: message.from, text: message.text, at: message.at ?? Date.now() });
+        this.opts.onChat({
+          from: message.from,
+          name: message.name?.trim() || undefined,
+          text: message.text,
+          at: message.at ?? Date.now(),
+        });
       }
       if (message.t === "chat-log" && message.messages) this.opts.onChatLog(message.messages);
       if (message.t === "roster" && message.host && message.guest) {

@@ -149,6 +149,10 @@ export class Room implements DurableObject {
       if (changed) this.broadcastRoster();
       return;
     }
+    if (message.t === "typing") {
+      this.send(this.other(socket), { t: "typing", from: role, on: Boolean((message as { on?: unknown }).on) });
+      return;
+    }
     if (message.t === "chat" && typeof (message as { text?: unknown }).text === "string") {
       const text = (message as { text: string }).text.trim().slice(0, 200);
       if (!text) return;

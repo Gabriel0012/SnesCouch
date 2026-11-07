@@ -93,7 +93,7 @@ function standardBits(pad: PadLike): number {
   if (pressed(pad, 2)) bits |= Y;
   if (pressed(pad, 3)) bits |= X;
   if (pressed(pad, 4) || pressed(pad, 6)) bits |= L;
-  if (pressed(pad, 5) || pressed(pad, 7)) bits |= R;
+  if (pressed(pad, 5)) bits |= R;
   if (pressed(pad, 8)) bits |= SELECT;
   if (pressed(pad, 9)) bits |= START;
   if (pressed(pad, 12)) bits |= UP;
@@ -111,7 +111,7 @@ function psBits(pad: PadLike): number {
   if (pressed(pad, 0)) bits |= Y;
   if (pressed(pad, 3)) bits |= X;
   if (pressed(pad, 4) || trigger(pad.axes[3])) bits |= L;
-  if (pressed(pad, 5) || trigger(pad.axes[4])) bits |= R;
+  if (pressed(pad, 5)) bits |= R;
   if (pressed(pad, 8)) bits |= SELECT;
   if (pressed(pad, 9)) bits |= START;
   bits |= stickBits(pad.axes[0], pad.axes[1]);
@@ -177,6 +177,18 @@ export function snesBits(pad: PadLike | null): number {
     default:
       return standardBits(pad);
   }
+}
+
+/** R2 is the Final Fight super, so it stays off the SNES R button. */
+export function superPressed(pad: PadLike | null): boolean {
+  if (!pad) return false;
+  const kind = layoutOf(pad);
+  if (kind === "ps") return trigger(pad.axes[4]) || pressed(pad, 7);
+  if (kind === "standard") {
+    const triggerButton = pad.buttons[7];
+    return !!triggerButton && (triggerButton.pressed || (triggerButton.value ?? 0) > 0.55);
+  }
+  return false;
 }
 
 export function padLabel(pad: PadLike): string {
