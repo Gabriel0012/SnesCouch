@@ -185,9 +185,18 @@ function setDelay(text: string) {
   delayLabel.classList.add("arrive");
 }
 
+const photoCovers = new Set([
+  "final-fight-3",
+  "pocky-rocky-2",
+  "mighty-morphin-power-rangers-the-movie",
+  "king-of-dragons",
+  "super-mario-world",
+  "donkey-kong-country",
+  "donkey-kong-country-3",
+]);
+
 function coverOf(id: string) {
-  if (id === "final-fight-3" || id === "pocky-rocky-2" || id === "mighty-morphin-power-rangers-the-movie" || id === "king-of-dragons") return `/covers/${id}.jpg`;
-  return `/covers/${id}.svg`;
+  return `/covers/${id}.${photoCovers.has(id) ? "jpg" : "svg"}`;
 }
 
 function plainGame(game: Game = selected): boolean {

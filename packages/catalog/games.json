@@ -31,6 +31,30 @@
       "sha1": "792355fb2ce50496b84760e3833662ca1c63cfc5",
       "bytes": 2097152,
       "players": 2
+    },
+    {
+      "id": "super-mario-world",
+      "title": "Super Mario World",
+      "region": "USA",
+      "sha1": "6b47bb75d16514b6a476aa0c73a683a2a4c18765",
+      "bytes": 524288,
+      "players": 2
+    },
+    {
+      "id": "donkey-kong-country",
+      "title": "Donkey Kong Country",
+      "region": "USA",
+      "sha1": "0fcee45d9af5d2f62995ed4b04d22146b906c86b",
+      "bytes": 4194304,
+      "players": 2
+    },
+    {
+      "id": "donkey-kong-country-3",
+      "title": "Donkey Kong Country 3",
+      "region": "USA",
+      "sha1": "d737e90d91dba8620fd5c2985eb6ff2cda7f23f9",
+      "bytes": 4194304,
+      "players": 2
     }
   ]
 }
