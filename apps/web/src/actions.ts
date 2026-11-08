@@ -122,7 +122,7 @@ const SAME: Record<SpotId, string[]> = {
 /** In-game action for a Super Nintendo button. Null hides a binding this game never uses. */
 export function actionFor(gameId: string, does: string): string | null {
   if (gameId === "local" && does === "Super") return null;
-  if (does === "Abre a conversa") return does;
+  if (does === "Abre a conversa" || does === "Segura o histórico") return does;
   if (DIRECTIONS.has(does)) return does;
   const table = BY_GAME[gameId];
   if (!table) return does;

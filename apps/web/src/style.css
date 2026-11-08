@@ -531,7 +531,66 @@ header .lede { color: var(--header-dim); margin: 0; }
 @media (hover: none) {
   #close-play { opacity: 1; pointer-events: auto; }
 }
-#bubbles { position: absolute; inset: 0; pointer-events: none; }
+#play-chat {
+  position: absolute;
+  z-index: 3;
+  left: 0;
+  bottom: 0;
+  width: min(52%, 18rem);
+  max-height: 46%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  line-height: 1.3;
+  pointer-events: none;
+}
+#play-chat[hidden] { display: none; }
+#log {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 1px;
+  min-height: 0;
+  overflow: hidden;
+}
+#log:empty::before {
+  content: "Sem mensagens";
+  padding: 0.18rem 0.4rem;
+  background: rgb(18 20 26 / 0.55);
+  color: rgb(246 243 234 / 0.82);
+  font-size: 12px;
+}
+.play-line {
+  margin: 0;
+  padding: 0.18rem 0.4rem;
+  background: rgb(18 20 26 / 0.55);
+  color: rgb(246 243 234 / 0.94);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.play-line b { color: rgb(245 197 24 / 0.92); font-weight: 400; }
+.play-line.blink {
+  animation: chat-blink 0.4s steps(2, end) infinite;
+}
+.play-line.blink b { color: inherit; }
+@keyframes chat-blink {
+  0%, 49% { background: rgb(245 197 24 / 0.95); color: #1c1e26; }
+  50%, 100% { background: rgb(18 20 26 / 0.55); color: rgb(246 243 234 / 0.94); }
+}
+#play-chat #chat { display: flex; pointer-events: auto; }
+#play-chat #chat[hidden] { display: none; }
+#play-chat #chat-text {
+  width: 100%;
+  margin: 0;
+  padding: 0.28rem 0.4rem;
+  border-radius: 0;
+  background: rgb(18 20 26 / 0.62);
+  color: #f6f3ea;
+  box-shadow: none;
+  font-size: 12px;
+}
+#play-chat #chat-text::placeholder { color: rgb(246 243 234 / 0.55); }
 #confirm {
   position: absolute;
   z-index: 4;
@@ -553,50 +612,6 @@ header .lede { color: var(--header-dim); margin: 0; }
   color: var(--hud-ink);
   box-shadow: inset -3px -3px 0 #111, inset 3px 3px 0 #4a4f5a, 3px 3px 0 #000;
 }
-.bubble {
-  position: absolute;
-  z-index: 2;
-  max-width: 42%;
-  margin: 0;
-  padding: 0.28rem 0.4rem;
-  background: var(--ink);
-  color: #f6f3ea;
-  font-size: 13px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  box-shadow: inset 0 0 0 3px var(--b), 3px 3px 0 #000;
-  transform: translate(-50%, calc(-100% - 2px));
-}
-.bubble::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: -7px;
-  width: 0;
-  height: 0;
-  transform: translateX(-50%);
-  border-left: 6px solid transparent;
-  border-right: 6px solid transparent;
-  border-top: 7px solid var(--b);
-}
-.bubble[data-slot="0"] { left: 32%; top: 52%; }
-.bubble[data-slot="1"] { left: 68%; top: 52%; box-shadow: inset 0 0 0 3px var(--x), 3px 3px 0 #000; }
-.bubble[data-slot="1"]::after { border-top-color: var(--x); }
-.dots { display: inline-flex; gap: 0.22rem; height: 0.7rem; align-items: flex-end; }
-.dots i {
-  width: 0.32rem;
-  height: 0.32rem;
-  background: #f6f3ea;
-  animation: talk 0.3s infinite steps(6, end);
-}
-.dots i:nth-child(2) { animation-delay: 0.05s; }
-.dots i:nth-child(3) { animation-delay: 0.1s; }
-@keyframes talk {
-  0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
-  40% { transform: translateY(-3px); opacity: 1; }
-}
-
 #screen {
   height: auto;
   aspect-ratio: 8 / 7;
@@ -1197,20 +1212,6 @@ a.login:active { transform: translate(2px, 2px); box-shadow: inset -3px -3px 0 v
 .people small { display: block; color: var(--muted); font-size: 13px; }
 #delay { min-height: 1.2rem; margin: 0.45rem 0 0; }
 
-.chat { display: flex; flex-direction: column; gap: 0.45rem; flex: none; min-width: 0; }
-.chat[hidden] { display: none; }
-#chat { flex-wrap: nowrap; min-width: 0; }
-#log {
-  height: 11rem;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overflow-wrap: anywhere;
-  background: var(--field);
-  box-shadow: inset 0 0 0 3px var(--x);
-  padding: 0.55rem;
-}
-.chat-line { margin: 0 0 0.45rem; overflow-wrap: anywhere; word-break: break-word; }
-.chat-line b { color: var(--gold); }
 
 #manual-open {
   align-self: flex-start;
@@ -1454,7 +1455,6 @@ header.arrive { animation: in-up calc(var(--tick) * 5) steps(5, end) both; }
 footer.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; animation-delay: 0.08s; }
 .game.arrive { animation: in-right calc(var(--tick) * 5) steps(5, end) both; }
 .people li.arrive,
-.chat-line.arrive,
 #delay.arrive,
 .saves button.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; }
 
@@ -1687,7 +1687,7 @@ footer.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; ani
   .step-in, .step-out,
   header.arrive, #viewport.arrive, .toolbar.arrive, .saves-line.arrive,
   #panel.arrive, footer.arrive, .game.arrive, .people li.arrive,
-  .chat-line.arrive, #delay.arrive, .saves button.arrive,
+  #delay.arrive, .saves button.arrive,
   #manual.step-in.move-modal .manual-card,
   #manual.step-out.move-modal .manual-card,
   #saves-modal.step-in.move-modal .saves-card,
@@ -1696,8 +1696,13 @@ footer.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; ani
   #alert.step-out.move-modal .alert-card,
   #tour.step-in.move-modal .tour-sheet,
   #tour.step-out.move-modal .tour-sheet,
-  .dots i, .volume-pop, #panel {
+  .volume-pop, #panel, .play-line.blink {
     animation: none !important;
     transition: none !important;
   }
+  .play-line.blink {
+    background: rgb(245 197 24 / 0.95);
+    color: #1c1e26;
+  }
+  .play-line.blink b { color: #1c1e26; }
 }

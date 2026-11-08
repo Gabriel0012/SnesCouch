@@ -39,9 +39,11 @@
           <div id="picture" hidden>
             <button id="close-play" type="button" aria-label="Fechar jogo">×</button>
             <canvas id="screen" width="256" height="224" hidden></canvas>
-            <div id="bubbles">
-              <p class="bubble" data-slot="0" hidden></p>
-              <p class="bubble" data-slot="1" hidden></p>
+            <div id="play-chat" hidden>
+              <div id="log" aria-live="polite"></div>
+              <form id="chat" hidden>
+                <input id="chat-text" maxlength="200" placeholder="Escreve para a sala" disabled />
+              </form>
             </div>
             <div id="confirm" hidden>
               <p id="confirm-text"></p>
@@ -167,14 +169,6 @@
             <button type="submit">Pedir</button>
           </form>
           <div id="friend-list"></div>
-        </section>
-        <section class="chat" hidden>
-          <h2>Conversa</h2>
-          <div id="log" aria-live="polite"></div>
-          <form id="chat" class="row">
-            <input id="chat-text" maxlength="200" placeholder="A conversa abre na sala" disabled />
-            <button type="submit" disabled>Enviar</button>
-          </form>
         </section>
         <button id="manual-open" type="button">Manual</button>
       </aside>

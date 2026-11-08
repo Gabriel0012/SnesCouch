@@ -68,7 +68,7 @@ const slides: Slide[] = [
     image: "/tour/home.png",
     alt: "Painel da sala com nome, criar sala e código.",
     title: "A sala",
-    body: "Põe o nome, cria a sala e manda o código de 5 letras. Na outra casa, entra com esse código. A conversa abre ali. Os dois precisam da mesma ROM.",
+    body: "Põe o nome, cria a sala e manda o código de 5 letras. Na outra casa, entra com esse código. A conversa aparece no canto do jogo. Os dois precisam da mesma ROM.",
     pins: [
       { x: 75.3, y: 10.2, w: 24.2, h: 7.4, label: "Nome", color: "b", place: "left" },
       { x: 75.3, y: 27.9, w: 24.2, h: 10.2, label: "Código", color: "x", place: "left" },

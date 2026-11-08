@@ -125,6 +125,7 @@ export const KEYBOARD_GUIDE: { button: string; does: string }[][] = [
     { button: "Shift esquerdo", does: "Select" },
     { button: "F", does: "Super" },
     { button: "Enter", does: "Abre a conversa" },
+    { button: "C", does: "Segura o histórico" },
   ],
   [
     { button: "I", does: "Cima" },

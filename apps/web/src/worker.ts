@@ -46,8 +46,6 @@ let timer = 0;
 const pendingRemote: { frame: number; buttons: number }[] = [];
 const macro: [number[] | null, number[] | null] = [null, null];
 const macroAt = [0, 0];
-let seenFrames = 0;
-let plainPlay = false;
 
 function clearMacros() {
   macro[0] = null;
@@ -72,70 +70,6 @@ function commitMacro(port: 0 | 1) {
   }
 }
 
-function findHeads(pixels: Uint8ClampedArray, w: number, h: number): { x: number; y: number }[] {
-  const y0 = Math.floor(h * 0.4);
-  const y1 = Math.floor(h * 0.94);
-  const minH = Math.floor(h * 0.16);
-  const maxH = Math.floor(h * 0.48);
-  const columns: { x: number; y: number; s: number }[] = [];
-  for (let x = 2; x < w; x += 2) {
-    let runTop = -1;
-    let runBottom = -1;
-    let gap = 0;
-    let bestTop = -1;
-    let bestScore = 0;
-    const close = (bottom: number) => {
-      if (runTop < 0) return;
-      const height = bottom - runTop;
-      if (height < minH || height > maxH) return;
-      const score = height + bottom;
-      if (score > bestScore) {
-        bestScore = score;
-        bestTop = runTop;
-      }
-    };
-    for (let y = y0; y < y1; y += 2) {
-      const i = (y * w + x) * 4;
-      const prev = (y * w + Math.max(0, x - 2)) * 4;
-      const diff = Math.abs(pixels[i] - pixels[prev]) + Math.abs(pixels[i + 1] - pixels[prev + 1]) + Math.abs(pixels[i + 2] - pixels[prev + 2]);
-      if (diff >= 72) {
-        if (runTop < 0) runTop = y;
-        runBottom = y;
-        gap = 0;
-      } else if (runTop >= 0) {
-        gap += 2;
-        if (gap > 8) {
-          close(runBottom);
-          runTop = -1;
-          gap = 0;
-        }
-      }
-    }
-    close(runBottom);
-    if (bestTop >= 0) columns.push({ x: x / w, y: bestTop / h, s: bestScore });
-  }
-  const peaks: { x: number; y: number; s: number }[] = [];
-  for (let x = 0; x < columns.length; ) {
-    const start = columns[x].x;
-    let best = columns[x];
-    let count = 0;
-    while (x < columns.length && columns[x].x - start < 0.1) {
-      count += 1;
-      if (columns[x].s > best.s) best = columns[x];
-      x += 1;
-    }
-    if (count >= 3) peaks.push(best);
-  }
-  peaks.sort((a, b) => b.s - a.s);
-  const kept: { x: number; y: number }[] = [];
-  for (const peak of peaks) {
-    if (kept.some((spot) => Math.abs(spot.x - peak.x) < 0.12)) continue;
-    kept.push({ x: peak.x, y: peak.y });
-    if (kept.length === 2) break;
-  }
-  return kept;
-}
-
 function post(message: unknown, transfer: Transferable[] = []) {
   const scope = self as unknown as { postMessage(message: unknown, transfer: Transferable[]): void };
   scope.postMessage(message, transfer);
@@ -157,11 +91,6 @@ function paint() {
     canvas.width = width;
     canvas.height = height;
     post({ t: "aspect", w: width, h: height });
-  }
-  seenFrames += 1;
-  if (!plainPlay && seenFrames % 8 === 0) {
-    const spots = findHeads(pixels, width, height);
-    if (spots.length) post({ t: "places", spots });
   }
   ctx.putImageData(new ImageData(pixels.slice(), width, height), 0, 0);
 }
@@ -291,7 +220,6 @@ function loop() {
 self.onmessage = async (event: MessageEvent<Incoming>) => {
   const message = event.data;
   if (message.t === "load") {
-    plainPlay = message.plain === true;
     canvas = message.canvas;
     ctx = canvas.getContext("2d", { alpha: false });
     pads = new Uint16Array(message.sab);
