@@ -22,6 +22,7 @@ import {
   type FriendLists,
   type RoomInvite,
 } from "./account.ts";
+import cartUrl from "./assets/snes-cart.png";
 import marioUrl from "./assets/mario.png";
 import luigiUrl from "./assets/luigi.png";
 import inviteYesUrl from "./assets/invite-yes.png";
@@ -33,7 +34,7 @@ import { KEYBOARD_GUIDE, connectedPads, padStatus, readPads, readSupers, setTouc
 import { paintManual } from "./manual.ts";
 import { startTouch } from "./touch.ts";
 import { controlGuide, keyboardScheme, padLabel } from "./pads.ts";
-import { games, matchRom, type Game } from "./rom.ts";
+import { games, localGame, looksLikeSnesRom, matchRom, sha1Of, type Game } from "./rom.ts";
 import { OnlineSession, type ChatLine, type Role, type Seat } from "./session.ts";
 import { FIGHTERS, LEFT, RIGHT, SELECT, fighterLabel, superSteps, type Fighter } from "./supers.ts";
 import { conceal, reveal, shown } from "./motion.ts";
@@ -48,6 +49,7 @@ const roomClose = document.querySelector<HTMLButtonElement>("#room-close")!;
 const roomBackdrop = document.querySelector<HTMLButtonElement>("#room-backdrop")!;
 const drop = document.querySelector<HTMLLabelElement>("#drop")!;
 const dropText = drop.childNodes[0];
+const dropHint = drop.querySelector("small");
 const welcome = document.querySelector<HTMLElement>("#welcome")!;
 const fileInput = document.querySelector<HTMLInputElement>("#file")!;
 const banner = document.querySelector<HTMLElement>("#banner")!;
@@ -97,6 +99,8 @@ const bubbles = [
 const savesModal = document.querySelector<HTMLElement>("#saves-modal")!;
 const savesGrid = document.querySelector<HTMLElement>("#saves-grid")!;
 const copyButton = document.querySelector<HTMLButtonElement>("#copy")!;
+const createButton = document.querySelector<HTMLButtonElement>("#create")!;
+const joinButton = document.querySelector<HTMLButtonElement>("#join")!;
 const volButton = document.querySelector<HTMLButtonElement>("#vol")!;
 const volSlider = document.querySelector<HTMLInputElement>("#vol-slider")!;
 const volReadout = document.querySelector<HTMLElement>("#vol-readout")!;
@@ -104,6 +108,8 @@ const volReadout = document.querySelector<HTMLElement>("#vol-readout")!;
 let screen = document.querySelector<HTMLCanvasElement>("#screen")!;
 let transferred = false;
 let zoom: "fit" | "2" | "3" | "4" = "fit";
+
+const shelf: Game[] = [...games, localGame];
 
 let selected: Game = games[0];
 let loadedGame: Game | null = null;
@@ -127,6 +133,10 @@ type AlertMode = "forget" | "reset-local" | "reset-ask" | "reset-wait" | "reset-
 let alertMode: AlertMode | null = null;
 let inviteTimer = 0;
 let inviteTick = 0;
+let liveSocket: WebSocket | null = null;
+let liveRetry = 0;
+let liveWait = 0;
+let liveBeat = 0;
 let inviteGen = 0;
 let friendGen = 0;
 let friendKey = "";
@@ -180,6 +190,43 @@ function coverOf(id: string) {
   return `/covers/${id}.svg`;
 }
 
+function plainGame(game: Game = selected): boolean {
+  return game.id === localGame.id;
+}
+
+function idleRoom(): string {
+  return plainGame()
+    ? "Só nesta máquina. Sem sala."
+    : "Partida local. A sala leva o outro controle para outra casa.";
+}
+
+function playingLine(game: Game): string {
+  return plainGame(game)
+    ? "Outro jogo nesta máquina. Os controles ligados jogam aqui."
+    : `${game.title} nesta máquina. Os dois teclados jogam aqui.`;
+}
+
+function gameMeta(game: Game): string {
+  if (plainGame(game)) return ready.has(game.id) ? "ROM neste navegador" : "Emule seu jogo local";
+  return `${game.region} · ${ready.has(game.id) ? "ROM neste navegador" : "ROM ainda não gravada"}`;
+}
+
+function gameFace(game: Game): HTMLElement {
+  if (!plainGame(game)) {
+    const image = document.createElement("img");
+    image.src = coverOf(game.id);
+    image.alt = "";
+    return image;
+  }
+  const face = document.createElement("span");
+  face.className = "cartridge";
+  const icon = document.createElement("img");
+  icon.src = cartUrl;
+  icon.alt = "";
+  face.append(icon);
+  return face;
+}
+
 let gamesIntro = true;
 
 function clipTitles() {
@@ -192,14 +239,14 @@ new ResizeObserver(() => clipTitles()).observe(pick);
 void document.fonts.ready.then(() => clipTitles());
 
 function renderGames() {
-  if (pick.childElementCount === games.length) {
+  if (pick.childElementCount === shelf.length) {
     const buttons = pick.querySelectorAll<HTMLButtonElement>(".game");
-    games.forEach((game, index) => {
+    shelf.forEach((game, index) => {
       const button = buttons[index];
       if (!button) return;
       button.classList.toggle("selected", game.id === selected.id);
       const meta = button.querySelector("small");
-      if (meta) meta.textContent = `${game.region} · ${ready.has(game.id) ? "ROM neste navegador" : "ROM ainda não gravada"}`;
+      if (meta) meta.textContent = gameMeta(game);
     });
     clipTitles();
     return;
@@ -207,7 +254,7 @@ function renderGames() {
   const intro = gamesIntro;
   gamesIntro = false;
   pick.replaceChildren();
-  games.forEach((game, index) => {
+  shelf.forEach((game, index) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `game${game.id === selected.id ? " selected" : ""}`;
@@ -216,19 +263,18 @@ function renderGames() {
       button.style.animationDelay = `${index * 50}ms`;
     }
     button.title = game.title;
-    const image = document.createElement("img");
-    image.src = coverOf(game.id);
-    image.alt = "";
     const text = document.createElement("span");
     const title = document.createElement("strong");
     title.textContent = game.title;
     title.title = game.title;
     const meta = document.createElement("small");
-    meta.textContent = `${game.region} · ${ready.has(game.id) ? "ROM neste navegador" : "ROM ainda não gravada"}`;
+    meta.textContent = gameMeta(game);
     text.append(title, meta);
-    button.append(image, text);
+    button.append(gameFace(game), text);
     button.addEventListener("click", () => {
+      const enteringPlain = plainGame(game) && !plainGame();
       selected = game;
+      if (enteringPlain && session) leaveRoom();
       updateDrop();
       renderGames();
       button.scrollIntoView({ inline: "center", block: "nearest" });
@@ -239,8 +285,25 @@ function renderGames() {
   clipTitles();
 }
 
+function syncPlainRoom() {
+  const plain = plainGame();
+  createButton.disabled = plain;
+  joinButton.disabled = plain;
+  codeInput.disabled = plain;
+  copyButton.disabled = plain;
+  if (!plain || session || loadedGame?.id === localGame.id) return;
+  roomState.textContent = idleRoom();
+}
+
 function updateDrop() {
-  if (dropText) dropText.textContent = `Solte a ROM de ${selected.title} aqui`;
+  if (plainGame()) {
+    if (dropText) dropText.textContent = "Solte a ROM de Super Nintendo aqui";
+    if (dropHint) dropHint.textContent = "O arquivo fica neste navegador. Qualquer ROM, só nesta máquina.";
+  } else {
+    if (dropText) dropText.textContent = `Solte a ROM de ${selected.title} aqui`;
+    if (dropHint) dropHint.textContent = "O arquivo fica neste navegador. Só entra se o SHA-1 for o da versão USA.";
+  }
+  syncPlainRoom();
 }
 
 function replaceScreen() {
@@ -269,7 +332,7 @@ function stopPlay(next: "drop" | "welcome" = "drop") {
   if (next === "welcome") {
     conceal(drop, "down");
     reveal(welcome, "down");
-    roomState.textContent = "Partida local. A sala leva o outro controle para outra casa.";
+    roomState.textContent = idleRoom();
   } else {
     conceal(welcome, "down");
     reveal(drop, "down");
@@ -285,7 +348,20 @@ async function openStored(game: Game) {
   const record = await loadRom(game.id);
   if (!record) {
     stopPlay();
-    roomState.textContent = `${game.title}. Solte a ROM uma vez. Ela fica neste navegador.`;
+    roomState.textContent = plainGame(game)
+      ? "Outro jogo. Solte uma ROM de Super Nintendo. Ela fica neste navegador."
+      : `${game.title}. Solte a ROM uma vez. Ela fica neste navegador.`;
+    return;
+  }
+  if (plainGame(game)) {
+    if (!looksLikeSnesRom(record.bytes.length)) {
+      await forgetRom(game.id);
+      ready.delete(game.id);
+      renderGames();
+      setBanner("A ROM gravada não parece de Super Nintendo. Solta o arquivo de novo.");
+      return;
+    }
+    await boot(localGame, record.bytes);
     return;
   }
   const matched = await matchRom(record.bytes);
@@ -306,6 +382,21 @@ async function openFile(file: File) {
   }
   setBanner("Conferindo o arquivo…");
   const bytes = new Uint8Array(await file.arrayBuffer());
+  if (plainGame()) {
+    if (!looksLikeSnesRom(bytes.length)) {
+      setBanner("Esse arquivo não parece uma ROM de Super Nintendo. Nada foi enviado.");
+      return;
+    }
+    try {
+      await saveRom(localGame.id, await sha1Of(bytes), bytes);
+      ready.add(localGame.id);
+      renderGames();
+    } catch {
+      setBanner("A ROM abriu, mas não ficou gravada neste navegador.");
+    }
+    await boot(localGame, bytes);
+    return;
+  }
   const matched = await matchRom(bytes);
   if (!matched || matched.game.id !== selected.id) {
     setBanner(matched
@@ -329,13 +420,13 @@ async function boot(game: Game, rom: Uint8Array) {
     return;
   }
   if (loadedGame?.id === game.id && worker) {
-    roomState.textContent = `${game.title} nesta máquina. Os dois teclados jogam aqui.`;
+    roomState.textContent = playingLine(game);
     return;
   }
   try { await speaker.resume(); } catch { /* o áudio espera um clique */ }
   stopPlay();
   romBytes = rom.slice();
-  startWorker(romBytes);
+  startWorker(romBytes, null, plainGame(game));
   loadedGame = game;
   selected = game;
   screen.hidden = false;
@@ -343,12 +434,12 @@ async function boot(game: Game, rom: Uint8Array) {
   conceal(welcome, "down");
   reveal(picture, "down");
   setBanner("");
-  roomState.textContent = `${game.title} nesta máquina. Os dois teclados jogam aqui.`;
+  roomState.textContent = playingLine(game);
   renderGames();
   await renderSaves();
 }
 
-function startWorker(rom: Uint8Array, net: ResetNet = null) {
+function startWorker(rom: Uint8Array, net: ResetNet = null, plain = false) {
   sab = new SharedArrayBuffer(4);
   pads = new Uint16Array(sab);
   const canvas = screen.transferControlToOffscreen();
@@ -358,7 +449,7 @@ function startWorker(rom: Uint8Array, net: ResetNet = null) {
   worker.onmessage = (event) => onWorker(event.data);
   const copy = rom.slice();
   worker.postMessage(
-    net ? { t: "load", rom: copy.buffer, canvas, sab, net } : { t: "load", rom: copy.buffer, canvas, sab },
+    { t: "load", rom: copy.buffer, canvas, sab, plain, ...(net ? { net } : {}) },
     [copy.buffer, canvas],
   );
 }
@@ -389,7 +480,7 @@ function relaunch(net: ResetNet) {
   worker?.terminate();
   worker = null;
   if (transferred) replaceScreen();
-  startWorker(rom, net);
+  startWorker(rom, plainGame(game) ? null : net, plainGame(game));
   loadedGame = game;
   setBanner(net ? "Jogo reiniciado nos dois." : "Jogo reiniciado.");
 }
@@ -442,6 +533,10 @@ function onWorker(message: {
   if (message.t === "restored") setBanner("Save carregado.");
   if (message.t === "places" && message.spots) placeBubbles(message.spots);
   if (message.t === "error") {
+    if (message.message === "O núcleo não aceitou essa ROM." && loadedGame?.id === localGame.id) {
+      void dropRejectedLocal();
+      return;
+    }
     if (message.message === "Não deu para reiniciar o jogo." && !relaunching) relaunch(resetNet);
     else setBanner(message.message ?? "Falha no núcleo.");
   }
@@ -627,6 +722,7 @@ function fillManual() {
     ? [{ slot: mine, pad: pads[0], keys: 0 as const }]
     : ([0, 1] as const).map((index) => ({ slot: index, pad: pads[index], keys: keyboardScheme(index, pads) }));
   const note = [selected.title + "."];
+  if (plainGame()) note.push("Partida só nesta máquina. Os controles ligados entram nos dois jogadores.");
   if (online) note.push("Na sala, este manual mostra só o controle desta máquina.");
   if (selected.id === "final-fight-3") {
     note.push("Select junto com o Super troca Haggar e Guy, Lucia ou Dean. Haggar, Guy e Dean precisam estar segurando o inimigo.");
@@ -645,7 +741,7 @@ function fillManual() {
       device: player.pad ? padLabel(player.pad) : "Teclado",
       guide: player.pad ? controlGuide(player.pad) : null,
       keys: KEYBOARD_GUIDE[player.keys ?? 0],
-      superKey: online ? "F" : player.keys === 0 ? "F" : player.keys === 1 ? ";" : null,
+      superKey: plainGame() ? null : online ? "F" : player.keys === 0 ? "F" : player.keys === 1 ? ";" : null,
     })),
   });
 }
@@ -911,7 +1007,20 @@ async function readSlot(game: Game, slot: number, savedAt: number) {
   showConfirm(`Carregar o save de ${when(savedAt)} nos dois?`, "both");
 }
 
+async function dropRejectedLocal() {
+  await forgetRom(localGame.id);
+  ready.delete(localGame.id);
+  if (loadedGame?.id === localGame.id) stopPlay();
+  renderGames();
+  updateDrop();
+  setBanner("O núcleo não aceitou essa ROM.");
+}
+
 async function connect(role: Role, code: string) {
+  if (plainGame()) {
+    setBanner("Este jogo só roda nesta máquina.");
+    return;
+  }
   if (!account) {
     nick = nickInput.value.replace(/\s+/g, " ").trim().slice(0, 20);
     nickInput.value = nick;
@@ -919,7 +1028,7 @@ async function connect(role: Role, code: string) {
   }
   await booting;
   if (!loadedGame || loadedGame.id !== selected.id) {
-    if (!session) roomState.textContent = "Partida local. A sala leva o outro controle para outra casa.";
+    if (!session) roomState.textContent = idleRoom();
     setBanner("Solte a ROM, ou escolha um jogo que já esteja neste navegador.");
     return;
   }
@@ -1329,9 +1438,70 @@ async function callFriend(friend: FriendCard) {
   }
 }
 
+function closeLive() {
+  window.clearTimeout(liveWait);
+  window.clearInterval(liveBeat);
+  liveWait = 0;
+  liveBeat = 0;
+  const socket = liveSocket;
+  liveSocket = null;
+  if (!socket) return;
+  socket.onopen = null;
+  socket.onmessage = null;
+  socket.onclose = null;
+  socket.close();
+}
+
+function fallbackPoll() {
+  if (inviteTimer || !account) return;
+  inviteTimer = window.setInterval(() => {
+    void pullInvites();
+    void paintFriends();
+  }, 8000);
+}
+
+function openLive() {
+  if (!account || liveSocket) return;
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(`${proto}//${location.host}/api/live`);
+  liveSocket = socket;
+  socket.onopen = () => {
+    if (liveSocket !== socket) return;
+    liveRetry = 0;
+    window.clearInterval(inviteTimer);
+    inviteTimer = 0;
+    window.clearInterval(liveBeat);
+    liveBeat = window.setInterval(() => {
+      if (socket.readyState === WebSocket.OPEN) socket.send("ping");
+    }, 25000);
+    void pullInvites();
+    void paintFriends();
+  };
+  socket.onmessage = (event) => {
+    if (event.data === "pong") return;
+    void pullInvites();
+    void paintFriends();
+  };
+  socket.onclose = () => {
+    if (liveSocket !== socket) return;
+    liveSocket = null;
+    window.clearInterval(liveBeat);
+    liveBeat = 0;
+    if (!account) return;
+    fallbackPoll();
+    const delay = Math.min(8000, 400 * 2 ** liveRetry);
+    liveRetry += 1;
+    liveWait = window.setTimeout(() => {
+      liveWait = 0;
+      if (account) openLive();
+    }, delay);
+  };
+}
+
 function watchInvites() {
   window.clearInterval(inviteTimer);
   inviteTimer = 0;
+  closeLive();
   if (!account) {
     friendKey = "";
     goneInvites.clear();
@@ -1342,10 +1512,7 @@ function watchInvites() {
     syncInviteVisibility();
     return;
   }
-  inviteTimer = window.setInterval(() => {
-    void pullInvites();
-    void paintFriends();
-  }, 3000);
+  openLive();
   void pullInvites();
   void paintFriends();
 }
@@ -1476,6 +1643,20 @@ function friendInviteCard(friend: FriendCard) {
   card.dataset.id = friend.id;
   const top = document.createElement("div");
   top.className = "invite-top";
+  if (friend.hasAvatar) {
+    const photo = document.createElement("img");
+    photo.className = "invite-photo";
+    photo.src = `/api/avatars/${friend.id}`;
+    photo.alt = "";
+    photo.width = 36;
+    photo.height = 36;
+    top.append(photo);
+  }
+  const copy = document.createElement("div");
+  copy.className = "invite-copy";
+  const name = document.createElement("b");
+  name.textContent = friend.name;
+  copy.append(name);
   const pals = document.createElement("span");
   pals.className = "invite-pals";
   pals.setAttribute("aria-hidden", "true");
@@ -1485,12 +1666,7 @@ function friendInviteCard(friend: FriendCard) {
     img.alt = "";
     pals.append(img);
   }
-  const copy = document.createElement("div");
-  copy.className = "invite-copy";
-  const name = document.createElement("b");
-  name.textContent = friend.name;
-  copy.append(name);
-  top.append(pals, copy);
+  top.append(copy, pals);
   card.append(top, inviteActions(() => void answerFriendInvite(friend, true), () => void answerFriendInvite(friend, false)));
   return card;
 }
@@ -1788,7 +1964,7 @@ function leaveRoom() {
   hideBubble(0);
   hideBubble(1);
   worker?.postMessage({ t: "local" });
-  roomState.textContent = "Partida local. A sala leva o outro controle para outra casa.";
+  roomState.textContent = idleRoom();
   setDelay("");
   dropHostedRoom();
   renderPeople();
@@ -2171,7 +2347,7 @@ booting = (async () => {
     peopleKey = "";
     renderPeople();
     const last = await lastGame();
-    const game = games.find((entry) => entry.id === last) ?? games.find((entry) => ready.has(entry.id));
+    const game = shelf.find((entry) => entry.id === last) ?? games.find((entry) => ready.has(entry.id));
     if (game) {
       selected = game;
       updateDrop();

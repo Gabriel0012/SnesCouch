@@ -33,6 +33,13 @@ test("King of Dragons usa a arma no Y e a magia no X", () => {
   assert.equal(actionFor("king-of-dragons", "Super"), null);
 });
 
+test("Outro jogo não lista o Super", () => {
+  assert.equal(actionFor("local", "Super"), null);
+  assert.equal(keyboardRows(keys, "local").some((row) => row.action === "Super"), false);
+  assert.equal(extraKeys(keys, "local", null).length, 0);
+  assert.equal(keyboardRows(keys, "local").find((row) => row.keys[0]?.label === "Z")?.action, "B");
+});
+
 test("Pocky & Rocky 2 não lista o Super", () => {
   assert.equal(actionFor("pocky-rocky-2", "Super"), null);
   assert.equal(keyboardRows(keys, "pocky-rocky-2").some((row) => row.action === "Super"), false);

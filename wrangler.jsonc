@@ -12,9 +12,15 @@
     "not_found_handling": "none"
   },
   "durable_objects": {
-    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+    "bindings": [
+      { "name": "ROOMS", "class_name": "Room" },
+      { "name": "INBOX", "class_name": "Inbox" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Room"] },
+    { "tag": "v2", "new_sqlite_classes": ["Inbox"] }
+  ],
   // O save na nuvem está desligado por custo. Não recolocar o R2. Ver AGENTS.md.
   // MERCADO_PAGO_URL é secret do Worker. O link não fica neste arquivo.
   "d1_databases": [

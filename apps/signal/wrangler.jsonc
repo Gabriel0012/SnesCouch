@@ -3,9 +3,15 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-11-06",
   "durable_objects": {
-    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+    "bindings": [
+      { "name": "ROOMS", "class_name": "Room" },
+      { "name": "INBOX", "class_name": "Inbox" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Room"] },
+    { "tag": "v2", "new_sqlite_classes": ["Inbox"] }
+  ],
   // O save na nuvem está desligado por custo. Não recolocar o R2. Ver AGENTS.md.
   "d1_databases": [
     {

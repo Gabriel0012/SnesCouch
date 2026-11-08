@@ -1,6 +1,7 @@
 import { FRIEND_CODE, ROOM_CODE, randomHex } from "./codes";
 import type { Env } from "./env";
 import { json, problem } from "./http";
+import { poke, pokeAll } from "./inbox";
 import type { UserRow } from "./users";
 
 const ROOM_TTL = 8 * 60 * 60 * 1000;
@@ -92,11 +93,13 @@ export async function requestFriend(request: Request, env: Env, user: UserRow): 
     await env.DB.prepare(
       "UPDATE friendships SET status = 'accepted' WHERE from_id = ? AND to_id = ?",
     ).bind(other.id, user.id).run();
+    await poke(env, other.id);
     return json({ status: "accepted" });
   }
   await env.DB.prepare(
     "INSERT INTO friendships (from_id, to_id, status, created_at) VALUES (?, ?, 'pending', ?)",
   ).bind(user.id, other.id, Date.now()).run();
+  await poke(env, other.id);
   return json({ status: "pending" }, 201);
 }
 
@@ -106,6 +109,7 @@ export async function acceptFriend(env: Env, user: UserRow, otherId: string): Pr
     "UPDATE friendships SET status = 'accepted' WHERE from_id = ? AND to_id = ? AND status = 'pending'",
   ).bind(otherId, user.id).run();
   if (!result.meta.changes) return problem("Não achei esse pedido.", 404);
+  await poke(env, otherId);
   return json({ ok: true });
 }
 
@@ -115,6 +119,7 @@ export async function declineFriend(env: Env, user: UserRow, otherId: string): P
     "DELETE FROM friendships WHERE from_id = ? AND to_id = ? AND status = 'pending'",
   ).bind(otherId, user.id).run();
   if (!result.meta.changes) return problem("Não achei esse pedido.", 404);
+  await poke(env, otherId);
   return json({ ok: true });
 }
 
@@ -123,6 +128,7 @@ export async function removeFriend(env: Env, user: UserRow, otherId: string): Pr
   await env.DB.prepare(
     "DELETE FROM friendships WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)",
   ).bind(user.id, otherId, otherId, user.id).run();
+  await poke(env, otherId);
   return json({ ok: true });
 }
 
@@ -137,13 +143,28 @@ export async function setOpenRoom(request: Request, env: Env, user: UserRow): Pr
   if (!ROOM_CODE.test(code)) return problem("Código inválido.", 400);
   await env.DB.prepare("UPDATE users SET room_code = ?, room_at = ? WHERE id = ?")
     .bind(code, Date.now(), user.id).run();
+  await pokeAll(env, await listeners(env, user.id));
   return json({ ok: true });
 }
 
 export async function clearOpenRoom(env: Env, user: UserRow): Promise<Response> {
+  const watchers = await listeners(env, user.id);
   await env.DB.prepare("UPDATE users SET room_code = NULL, room_at = NULL WHERE id = ?").bind(user.id).run();
   await env.DB.prepare("DELETE FROM room_invites WHERE from_id = ?").bind(user.id).run();
+  await pokeAll(env, watchers);
   return json({ ok: true });
+}
+
+async function listeners(env: Env, userId: string): Promise<string[]> {
+  const friends = await env.DB.prepare(
+    `SELECT CASE WHEN from_id = ? THEN to_id ELSE from_id END AS id
+     FROM friendships
+     WHERE status = 'accepted' AND (from_id = ? OR to_id = ?)`,
+  ).bind(userId, userId, userId).all<{ id: string }>();
+  const invited = await env.DB.prepare(
+    "SELECT to_id AS id FROM room_invites WHERE from_id = ?",
+  ).bind(userId).all<{ id: string }>();
+  return [...(friends.results ?? []), ...(invited.results ?? [])].map((row) => row.id);
 }
 
 async function acceptedFriend(env: Env, userId: string, otherId: string): Promise<boolean> {
@@ -164,6 +185,7 @@ export async function inviteToRoom(env: Env, user: UserRow, otherId: string): Pr
   await env.DB.prepare(
     "INSERT INTO room_invites (id, from_id, to_id, room_code, created_at) VALUES (?, ?, ?, ?, ?)",
   ).bind(randomHex(16), user.id, otherId, room, now).run();
+  await poke(env, otherId);
   return json({ ok: true }, 201);
 }
 
@@ -224,7 +246,8 @@ export async function sharesAvatar(env: Env, user: UserRow, otherId: string): Pr
   if (otherId === user.id) return true;
   const row = await env.DB.prepare(
     `SELECT status FROM friendships
-     WHERE status = 'accepted' AND ((from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?))`,
-  ).bind(user.id, otherId, otherId, user.id).first();
+     WHERE (status = 'accepted' AND ((from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)))
+        OR (status = 'pending' AND from_id = ? AND to_id = ?)`,
+  ).bind(user.id, otherId, otherId, user.id, otherId, user.id).first();
   return Boolean(row);
 }

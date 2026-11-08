@@ -1,5 +1,6 @@
 export interface Env {
   ROOMS: DurableObjectNamespace;
+  INBOX: DurableObjectNamespace;
   ASSETS?: Fetcher;
   DB: D1Database;
   // Ausente de propósito. O save na nuvem está desligado. Ver AGENTS.md.

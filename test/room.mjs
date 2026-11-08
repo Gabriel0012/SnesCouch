@@ -68,6 +68,8 @@ test("a sala apresenta os dois jogadores e recusa hash diferente", async () => {
     await server.ready;
     const health = await fetch(`${base}/api/health`);
     assert.equal(health.status, 200);
+    const live = await fetch(`${base}/api/live`);
+    assert.equal(live.status, 401);
     const iceBody = await (await fetch(`${base}/api/ice`)).json();
     assert.ok(iceBody.iceServers.some((entry) => String(entry.urls).startsWith("stun:")));
 

@@ -23,7 +23,7 @@ type Core = {
 };
 
 let core: Core | null = null;
-interface LoadMessage { t: "load"; rom: ArrayBuffer; canvas: OffscreenCanvas; sab: SharedArrayBuffer; net?: { slot: Slot; delay: number } }
+interface LoadMessage { t: "load"; rom: ArrayBuffer; canvas: OffscreenCanvas; sab: SharedArrayBuffer; net?: { slot: Slot; delay: number }; plain?: boolean }
 interface NetStart { t: "net-start"; slot: Slot; delay: number }
 interface NetRemote { t: "net-remote"; frames: { frame: number; buttons: number }[] }
 interface NetResume { t: "net-resume"; slot: Slot; delay: number; frame: number; state: ArrayBuffer }
@@ -47,6 +47,7 @@ const pendingRemote: { frame: number; buttons: number }[] = [];
 const macro: [number[] | null, number[] | null] = [null, null];
 const macroAt = [0, 0];
 let seenFrames = 0;
+let plainPlay = false;
 
 function clearMacros() {
   macro[0] = null;
@@ -158,7 +159,7 @@ function paint() {
     post({ t: "aspect", w: width, h: height });
   }
   seenFrames += 1;
-  if (seenFrames % 8 === 0) {
+  if (!plainPlay && seenFrames % 8 === 0) {
     const spots = findHeads(pixels, width, height);
     if (spots.length) post({ t: "places", spots });
   }
@@ -290,6 +291,7 @@ function loop() {
 self.onmessage = async (event: MessageEvent<Incoming>) => {
   const message = event.data;
   if (message.t === "load") {
+    plainPlay = message.plain === true;
     canvas = message.canvas;
     ctx = canvas.getContext("2d", { alpha: false });
     pads = new Uint16Array(message.sab);

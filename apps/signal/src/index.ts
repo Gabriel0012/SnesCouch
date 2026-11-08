@@ -2,11 +2,13 @@ import catalog from "../../../packages/catalog/games.json";
 import { ROOM_CODE } from "./codes";
 import type { Env } from "./env";
 import { baseHeaders } from "./http";
+import { Inbox } from "./inbox";
 import { Room } from "./room";
 import { routeAccount } from "./routes";
+import { userFromRequest } from "./users";
 
 export type { Env };
-export { Room };
+export { Inbox, Room };
 
 function headers(extra?: HeadersInit) {
   return Object.fromEntries(baseHeaders(extra));
@@ -52,6 +54,7 @@ export default {
     if (url.pathname === "/api/coffee") {
       return Response.json({ url: coffeeUrl(env) }, { headers: headers() });
     }
+    if (url.pathname === "/api/live") return live(request, env);
     const match = url.pathname.match(/^\/api\/rooms\/([A-HJ-NP-Z2-9]{5})$/);
     if (match) {
       if (!ROOM_CODE.test(match[1])) return new Response("Código inválido.", { status: 400, headers: headers() });
@@ -62,6 +65,21 @@ export default {
     return serveAsset(request, env);
   },
 };
+
+async function live(request: Request, env: Env): Promise<Response> {
+  let user;
+  try {
+    user = await userFromRequest(request, env);
+  } catch (error) {
+    console.error(error);
+    return new Response("A conta não respondeu.", { status: 503, headers: headers() });
+  }
+  if (!user) return new Response("Entre na conta para continuar.", { status: 401, headers: headers() });
+  if (request.headers.get("Upgrade") !== "websocket") {
+    return new Response("Esperava WebSocket.", { status: 426, headers: headers() });
+  }
+  return env.INBOX.get(env.INBOX.idFromName(user.id)).fetch(request);
+}
 
 async function serveAsset(request: Request, env: Env): Promise<Response> {
   if (!env.ASSETS) return new Response("Não encontrado.", { status: 404, headers: headers() });
