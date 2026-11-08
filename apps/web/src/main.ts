@@ -19,8 +19,13 @@ import {
   uploadSave,
   type AccountUser,
   type FriendCard,
+  type FriendLists,
   type RoomInvite,
 } from "./account.ts";
+import marioUrl from "./assets/mario.png";
+import luigiUrl from "./assets/luigi.png";
+import inviteYesUrl from "./assets/invite-yes.png";
+import inviteNoUrl from "./assets/invite-no.png";
 import { Speaker } from "./audio.ts";
 import { kindFromLabel, padIcon } from "./icons.ts";
 import { startInstall } from "./install.ts";
@@ -68,6 +73,11 @@ const friendsSection = document.querySelector<HTMLElement>("#friends")!;
 const friendForm = document.querySelector<HTMLFormElement>("#friend-add")!;
 const friendCodeInput = document.querySelector<HTMLInputElement>("#friend-code")!;
 const friendList = document.querySelector<HTMLElement>("#friend-list")!;
+const invitesSection = document.querySelector<HTMLElement>("#invites")!;
+const roomInvitesBox = document.querySelector<HTMLElement>("#room-invites")!;
+const friendInvitesBox = document.querySelector<HTMLElement>("#friend-invites")!;
+const roomInviteList = document.querySelector<HTMLElement>("#room-invite-list")!;
+const friendInviteList = document.querySelector<HTMLElement>("#friend-invite-list")!;
 const savesCloud = document.querySelector<HTMLElement>("#saves-cloud")!;
 const people = document.querySelector<HTMLElement>("#players")!;
 const log = document.querySelector<HTMLElement>("#log")!;
@@ -113,10 +123,14 @@ const localChecks = new Map<number, number>();
 const remoteChecks = new Map<number, number>();
 let checkpointWait: ((snapshot: { frame: number; state: Uint8Array; delay: number }) => void) | null = null;
 let saveWait: ((saved: { state: Uint8Array; shot: Uint8Array | null }) => void) | null = null;
-type AlertMode = "forget" | "reset-local" | "reset-ask" | "reset-wait" | "reset-in" | "invite";
+type AlertMode = "forget" | "reset-local" | "reset-ask" | "reset-wait" | "reset-in";
 let alertMode: AlertMode | null = null;
-let shownInvite: RoomInvite | null = null;
 let inviteTimer = 0;
+let inviteTick = 0;
+let inviteGen = 0;
+let friendGen = 0;
+let friendKey = "";
+const goneInvites = new Set<string>();
 let nick = "";
 let account: AccountUser | null = null;
 let hostedCode: string | null = null;
@@ -958,7 +972,7 @@ async function connect(role: Role, code: string) {
       kickReset(net);
     },
     onResetAsk: (name) => {
-      if (session !== mine || alertMode === "forget" || alertMode === "invite" || saveDialog) {
+      if (session !== mine || alertMode === "forget" || saveDialog) {
         mine.answerReset(false);
         return;
       }
@@ -1183,7 +1197,7 @@ async function refreshAccount() {
   }
 }
 
-function friendCard(friend: FriendCard, pending: "in" | "out" | null) {
+function friendCard(friend: FriendCard, pending: "out" | null) {
   const card = document.createElement("article");
   card.className = "friend-card";
   const who = document.createElement("div");
@@ -1200,31 +1214,25 @@ function friendCard(friend: FriendCard, pending: "in" | "out" | null) {
   const name = document.createElement("b");
   name.textContent = friend.name;
   const meta = document.createElement("small");
-  meta.textContent = pending === "in" ? "quer ser seu amigo" : pending === "out" ? "pedido enviado" : friend.friendCode;
+  meta.textContent = pending === "out" ? "pedido enviado" : friend.friendCode;
   text.append(name, meta);
   who.append(text);
   const actions = document.createElement("div");
   actions.className = "friend-actions";
-  if (pending === "in") {
-    const yes = document.createElement("button");
-    yes.type = "button";
-    yes.textContent = "Aceitar";
-    yes.addEventListener("click", () => void changeFriend(() => acceptFriend(friend.id), "Pedido aceito."));
-    const no = document.createElement("button");
-    no.type = "button";
-    no.textContent = "Recusar";
-    no.addEventListener("click", () => void changeFriend(() => declineFriend(friend.id), "Pedido recusado."));
-    actions.append(yes, no);
-  } else if (pending === "out") {
+  if (pending === "out") {
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.textContent = "Cancelar";
     cancel.addEventListener("click", () => void changeFriend(() => removeFriend(friend.id), "Pedido cancelado."));
     actions.append(cancel);
   } else {
+    who.append(friendOptions(friend));
     const call = document.createElement("button");
     call.type = "button";
-    call.textContent = "Convidar";
+    call.className = "friend-call";
+    const plus = document.createElement("i");
+    plus.setAttribute("aria-hidden", "true");
+    call.append(plus, document.createTextNode("Convidar"));
     call.addEventListener("click", () => void callFriend(friend));
     actions.append(call);
     if (friend.roomCode) {
@@ -1234,14 +1242,69 @@ function friendCard(friend: FriendCard, pending: "in" | "out" | null) {
       join.addEventListener("click", () => joinCode(friend.roomCode!));
       actions.append(join);
     }
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.textContent = "Remover";
-    remove.addEventListener("click", () => void changeFriend(() => removeFriend(friend.id), `${friend.name} saiu da lista.`));
-    actions.append(remove);
   }
   card.append(who, actions);
   return card;
+}
+
+let openFriendMenu: HTMLElement | null = null;
+
+function closeFriendMenu(focusBack = false) {
+  const menu = openFriendMenu;
+  if (!menu) return;
+  const button = menu.parentElement?.querySelector(".friend-more");
+  menu.hidden = true;
+  menu.classList.remove("up");
+  if (button instanceof HTMLButtonElement) button.setAttribute("aria-expanded", "false");
+  openFriendMenu = null;
+  if (focusBack && button instanceof HTMLButtonElement) button.focus();
+}
+
+function placeFriendMenu(menu: HTMLElement) {
+  menu.classList.remove("up");
+  const limit = panel.getBoundingClientRect().bottom;
+  if (menu.getBoundingClientRect().bottom > limit) menu.classList.add("up");
+}
+
+function friendOptions(friend: FriendCard) {
+  const options = document.createElement("div");
+  options.className = "friend-options";
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "friend-more";
+  more.setAttribute("aria-label", "Opções");
+  more.setAttribute("aria-haspopup", "menu");
+  more.setAttribute("aria-expanded", "false");
+  const dots = document.createElement("i");
+  dots.setAttribute("aria-hidden", "true");
+  more.append(dots);
+  const menu = document.createElement("div");
+  menu.className = "friend-menu";
+  menu.hidden = true;
+  menu.setAttribute("role", "menu");
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "friend-remove";
+  remove.setAttribute("role", "menuitem");
+  const bin = document.createElement("i");
+  bin.setAttribute("aria-hidden", "true");
+  remove.append(bin, document.createTextNode("Remover"));
+  remove.addEventListener("click", () => {
+    closeFriendMenu();
+    void changeFriend(() => removeFriend(friend.id), `${friend.name} saiu da lista.`);
+  });
+  menu.append(remove);
+  more.addEventListener("click", () => {
+    const willOpen = menu.hidden;
+    closeFriendMenu();
+    if (!willOpen) return;
+    menu.hidden = false;
+    more.setAttribute("aria-expanded", "true");
+    openFriendMenu = menu;
+    placeFriendMenu(menu);
+  });
+  options.append(more, menu);
+  return options;
 }
 
 async function callFriend(friend: FriendCard) {
@@ -1269,33 +1332,254 @@ async function callFriend(friend: FriendCard) {
 function watchInvites() {
   window.clearInterval(inviteTimer);
   inviteTimer = 0;
-  if (!account) return;
-  inviteTimer = window.setInterval(() => void pullInvites(), 3000);
+  if (!account) {
+    friendKey = "";
+    goneInvites.clear();
+    window.clearInterval(inviteTick);
+    inviteTick = 0;
+    roomInviteList.replaceChildren();
+    friendInviteList.replaceChildren();
+    syncInviteVisibility();
+    return;
+  }
+  inviteTimer = window.setInterval(() => {
+    void pullInvites();
+    void paintFriends();
+  }, 3000);
   void pullInvites();
+  void paintFriends();
+}
+
+function cardById(list: HTMLElement, id: string): HTMLElement | null {
+  for (const node of list.children) {
+    if (node instanceof HTMLElement && node.dataset.id === id) return node;
+  }
+  return null;
+}
+
+function setBusy(card: HTMLElement | null, busy: boolean) {
+  if (!card) return;
+  for (const button of card.querySelectorAll("button")) button.disabled = busy;
+}
+
+function syncList<T extends { id: string }>(list: HTMLElement, items: T[], render: (item: T) => HTMLElement) {
+  const ids = new Set(items.map((item) => item.id));
+  for (const item of items) list.append(cardById(list, item.id) ?? render(item));
+  for (const node of [...list.children]) {
+    if (node instanceof HTMLElement && !ids.has(node.dataset.id ?? "")) node.remove();
+  }
+}
+
+function syncInviteVisibility() {
+  const roomEmpty = roomInviteList.childElementCount === 0;
+  const friendEmpty = friendInviteList.childElementCount === 0;
+  roomInvitesBox.hidden = roomEmpty;
+  friendInvitesBox.hidden = friendEmpty;
+  invitesSection.hidden = roomEmpty && friendEmpty;
+}
+
+function inviteClock(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function paintInviteMeters() {
+  const now = Date.now();
+  for (const card of [...roomInviteList.querySelectorAll<HTMLElement>(".invite-card")]) {
+    const expires = Number(card.dataset.expires);
+    const created = Number(card.dataset.created);
+    const total = Math.max(1, expires - created);
+    const left = expires - now;
+    const fill = card.querySelector<HTMLElement>(".invite-meter i span");
+    if (fill) fill.style.width = `${Math.max(0, Math.min(1, left / total)) * 100}%`;
+    const count = card.querySelector(".invite-count");
+    if (count) count.textContent = inviteClock(left);
+    if (left <= 0 && card.dataset.id) {
+      goneInvites.add(card.dataset.id);
+      card.remove();
+    }
+  }
+  if (roomInviteList.childElementCount === 0) {
+    window.clearInterval(inviteTick);
+    inviteTick = 0;
+  }
+  syncInviteVisibility();
+}
+
+function ensureInviteTick() {
+  paintInviteMeters();
+  if (inviteTick || roomInviteList.childElementCount === 0) return;
+  inviteTick = window.setInterval(paintInviteMeters, 250);
+}
+
+function inviteActions(onYes: () => void, onNo: () => void) {
+  const actions = document.createElement("div");
+  actions.className = "invite-actions";
+  const yes = document.createElement("button");
+  yes.type = "button";
+  yes.className = "invite-yes";
+  yes.setAttribute("aria-label", "Aceitar");
+  const yesIcon = document.createElement("img");
+  yesIcon.src = inviteYesUrl;
+  yesIcon.alt = "";
+  yes.append(yesIcon);
+  const no = document.createElement("button");
+  no.type = "button";
+  no.className = "invite-no";
+  no.setAttribute("aria-label", "Recusar");
+  const noIcon = document.createElement("img");
+  noIcon.src = inviteNoUrl;
+  noIcon.alt = "";
+  no.append(noIcon);
+  yes.addEventListener("click", onYes);
+  no.addEventListener("click", onNo);
+  actions.append(yes, no);
+  return actions;
+}
+
+function roomInviteCard(invite: RoomInvite) {
+  const card = document.createElement("article");
+  card.className = "invite-card";
+  card.dataset.id = invite.id;
+  card.dataset.created = String(invite.createdAt);
+  card.dataset.expires = String(invite.expiresAt);
+  const top = document.createElement("div");
+  top.className = "invite-top";
+  const mark = document.createElement("i");
+  mark.className = "invite-enter";
+  mark.setAttribute("aria-hidden", "true");
+  const copy = document.createElement("div");
+  copy.className = "invite-copy";
+  const name = document.createElement("b");
+  name.textContent = invite.fromName;
+  const meta = document.createElement("small");
+  meta.textContent = `Sala ${invite.roomCode}`;
+  copy.append(name, meta);
+  top.append(mark, copy);
+  const meter = document.createElement("p");
+  meter.className = "invite-meter";
+  const track = document.createElement("i");
+  track.setAttribute("aria-hidden", "true");
+  track.append(document.createElement("span"));
+  const count = document.createElement("span");
+  count.className = "invite-count";
+  meter.append(track, count);
+  card.append(top, meter, inviteActions(() => void takeRoomInvite(invite), () => void dropRoomInvite(invite.id)));
+  return card;
+}
+
+function friendInviteCard(friend: FriendCard) {
+  const card = document.createElement("article");
+  card.className = "invite-card";
+  card.dataset.id = friend.id;
+  const top = document.createElement("div");
+  top.className = "invite-top";
+  const pals = document.createElement("span");
+  pals.className = "invite-pals";
+  pals.setAttribute("aria-hidden", "true");
+  for (const src of [marioUrl, luigiUrl]) {
+    const img = document.createElement("img");
+    img.src = src;
+    img.alt = "";
+    pals.append(img);
+  }
+  const copy = document.createElement("div");
+  copy.className = "invite-copy";
+  const name = document.createElement("b");
+  name.textContent = friend.name;
+  copy.append(name);
+  top.append(pals, copy);
+  card.append(top, inviteActions(() => void answerFriendInvite(friend, true), () => void answerFriendInvite(friend, false)));
+  return card;
+}
+
+async function takeRoomInvite(invite: RoomInvite) {
+  const card = cardById(roomInviteList, invite.id);
+  setBusy(card, true);
+  try {
+    const code = await acceptInvite(invite.id);
+    goneInvites.add(invite.id);
+    card?.remove();
+    syncInviteVisibility();
+    joinCode(code);
+  } catch (error) {
+    setBusy(card, false);
+    if (error instanceof AccountError && error.status === 401) {
+      account = null;
+      paintAccount();
+    }
+    setBanner(error instanceof Error ? error.message : "Não deu para entrar na sala.");
+  }
+}
+
+async function dropRoomInvite(id: string) {
+  goneInvites.add(id);
+  cardById(roomInviteList, id)?.remove();
+  syncInviteVisibility();
+  try {
+    await declineInvite(id);
+  } catch (error) {
+    goneInvites.delete(id);
+    if (error instanceof AccountError && error.status === 401) {
+      account = null;
+      paintAccount();
+      return;
+    }
+    setBanner(error instanceof Error ? error.message : "Não deu para recusar.");
+    void pullInvites();
+  }
+}
+
+async function answerFriendInvite(friend: FriendCard, accept: boolean) {
+  const card = cardById(friendInviteList, friend.id);
+  setBusy(card, true);
+  try {
+    if (accept) await acceptFriend(friend.id);
+    else await declineFriend(friend.id);
+    setBanner(accept ? "Pedido aceito." : "Pedido recusado.");
+    friendKey = "";
+    await paintFriends();
+  } catch (error) {
+    setBusy(card, false);
+    if (error instanceof AccountError && error.status === 401) {
+      account = null;
+      paintAccount();
+    }
+    setBanner(error instanceof Error ? error.message : "Não deu para atualizar os amigos.");
+  }
 }
 
 async function pullInvites() {
   if (!account || document.visibilityState === "hidden") return;
+  const gen = ++inviteGen;
   let invites: RoomInvite[];
   try {
     invites = await loadInvites();
   } catch (error) {
+    if (gen !== inviteGen) return;
     if (error instanceof AccountError && error.status === 401) {
       account = null;
       paintAccount();
     }
     return;
   }
-  const open = invites.filter((item) => !(session && roomCode.textContent === item.roomCode));
-  for (const item of invites) {
-    if (session && roomCode.textContent === item.roomCode) void declineInvite(item.id).catch(() => undefined);
+  if (gen !== inviteGen || !account) return;
+  for (const id of [...goneInvites]) {
+    if (!invites.some((item) => item.id === id)) goneInvites.delete(id);
   }
-  if (alertMode === "invite" && shownInvite && !open.some((item) => item.id === shownInvite?.id)) closeAlert();
-  if (alertMode || saveDialog) return;
-  const next = open[0];
-  if (!next) return;
-  shownInvite = next;
-  openAlert("invite", next.fromName);
+  const here = session ? roomCode.textContent : "";
+  for (const item of invites) {
+    if (here && here === item.roomCode) {
+      goneInvites.add(item.id);
+      void declineInvite(item.id).catch(() => undefined);
+    }
+  }
+  const now = Date.now();
+  const open = invites.filter((item) => item.expiresAt > now && !goneInvites.has(item.id));
+  syncList(roomInviteList, open, roomInviteCard);
+  ensureInviteTick();
 }
 
 async function changeFriend(action: () => Promise<void>, done: string) {
@@ -1312,24 +1596,42 @@ async function changeFriend(action: () => Promise<void>, done: string) {
   }
 }
 
+function friendSignature(lists: FriendLists): string {
+  const part = (items: FriendCard[], tag: string) => items.map((item) => (
+    `${tag}:${item.id}:${item.name}:${item.roomCode ?? ""}:${item.hasAvatar ? 1 : 0}`
+  )).join("|");
+  return `${part(lists.incoming, "in")}\n${part(lists.outgoing, "out")}\n${part(lists.friends, "ok")}`;
+}
+
 async function paintFriends() {
   if (!account) {
+    closeFriendMenu();
+    friendKey = "";
+    friendGen += 1;
     friendList.replaceChildren();
+    friendInviteList.replaceChildren();
+    syncInviteVisibility();
     return;
   }
-  let lists;
+  const gen = ++friendGen;
+  let lists: FriendLists;
   try {
     lists = await loadFriends();
   } catch (error) {
+    if (gen !== friendGen) return;
     if (error instanceof AccountError && error.status === 401) {
       account = null;
       paintAccount();
     }
     return;
   }
+  if (gen !== friendGen || !account) return;
+  const next = friendSignature(lists);
+  if (next === friendKey) return;
+  closeFriendMenu();
+  friendKey = next;
   friendList.replaceChildren();
   const blocks = [
-    ...lists.incoming.map((friend) => ({ friend, pending: "in" as const })),
     ...lists.outgoing.map((friend) => ({ friend, pending: "out" as const })),
     ...lists.friends.map((friend) => ({ friend, pending: null })),
   ];
@@ -1338,9 +1640,11 @@ async function paintFriends() {
     empty.className = "note";
     empty.textContent = "Nenhum amigo ainda. Manda o seu código.";
     friendList.append(empty);
-    return;
+  } else {
+    for (const block of blocks) friendList.append(friendCard(block.friend, block.pending));
   }
-  for (const block of blocks) friendList.append(friendCard(block.friend, block.pending));
+  syncList(friendInviteList, lists.incoming, friendInviteCard);
+  syncInviteVisibility();
 }
 
 accountCode.addEventListener("click", () => {
@@ -1532,7 +1836,19 @@ savesModal.addEventListener("click", (event) => {
   if (event.target === savesModal) closeSaves();
 });
 
+document.addEventListener("click", (event) => {
+  if (!openFriendMenu) return;
+  const home = openFriendMenu.parentElement;
+  if (event.target instanceof Node && home?.contains(event.target)) return;
+  closeFriendMenu();
+});
+panel.addEventListener("scroll", () => closeFriendMenu(), { passive: true });
+
 window.addEventListener("keydown", (event) => {
+  if (event.code === "Escape" && openFriendMenu) {
+    closeFriendMenu(true);
+    return;
+  }
   if (event.code === "Escape" && !alertBox.hidden) dismissAlert();
   else if (event.code === "Escape" && !savesModal.hidden) closeSaves();
   else if (event.code === "Escape" && !manual.hidden) closeManual();
@@ -1684,9 +2000,6 @@ function openAlert(mode: AlertMode, name = "") {
     alertYes.textContent = "Reiniciar";
   } else if (mode === "reset-wait") {
     alertText.textContent = "Esperando o outro jogador confirmar o reinício.";
-  } else if (mode === "invite") {
-    alertText.textContent = `${name} te chamou para a sala. Confirme para entrar direto.`;
-    alertYes.textContent = "Confirmar";
   } else {
     alertText.textContent = `${name} quer reiniciar o jogo. Confirme para os dois voltarem ao começo juntos.`;
     alertYes.textContent = "Confirmar";
@@ -1697,18 +2010,15 @@ function openAlert(mode: AlertMode, name = "") {
 
 function closeAlert() {
   alertMode = null;
-  shownInvite = null;
   alertYes.hidden = false;
   conceal(alertBox, "modal");
 }
 
 function dismissAlert() {
   const mode = alertMode;
-  const invite = shownInvite;
   if (mode === "reset-wait") session?.cancelReset();
   if (mode === "reset-in") session?.answerReset(false);
   if (mode === "reset-wait" || mode === "reset-in") setBanner("Reinício cancelado.");
-  if (mode === "invite" && invite) void declineInvite(invite.id).catch(() => undefined);
   closeAlert();
 }
 
@@ -1762,24 +2072,6 @@ alertYes.addEventListener("click", () => {
     session?.answerReset(true);
     if (host) closeAlert();
     else openAlert("reset-wait");
-    return;
-  }
-  if (mode === "invite") {
-    const invite = shownInvite;
-    closeAlert();
-    if (!invite) return;
-    void (async () => {
-      try {
-        const code = await acceptInvite(invite.id);
-        joinCode(code);
-      } catch (error) {
-        if (error instanceof AccountError && error.status === 401) {
-          account = null;
-          paintAccount();
-        }
-        setBanner(error instanceof Error ? error.message : "Não deu para entrar na sala.");
-      }
-    })();
   }
 });
 

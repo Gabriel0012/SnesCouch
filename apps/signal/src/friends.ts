@@ -194,7 +194,14 @@ export async function listInvites(env: Env, user: UserRow): Promise<Response> {
       await env.DB.prepare("DELETE FROM room_invites WHERE id = ?").bind(row.id).run();
       continue;
     }
-    invites.push({ id: row.id, fromId: row.from_id, fromName: row.from_name, roomCode: row.room_code });
+    invites.push({
+      id: row.id,
+      fromId: row.from_id,
+      fromName: row.from_name,
+      roomCode: row.room_code,
+      createdAt: row.created_at,
+      expiresAt: row.created_at + INVITE_TTL,
+    });
   }
   return json({ invites });
 }

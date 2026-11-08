@@ -176,6 +176,8 @@ export interface RoomInvite {
   fromId: string;
   fromName: string;
   roomCode: string;
+  createdAt: number;
+  expiresAt: number;
 }
 
 export async function inviteFriend(id: string): Promise<void> {
@@ -189,7 +191,15 @@ export async function loadInvites(): Promise<RoomInvite[]> {
   const body = await response.json() as { invites?: Partial<RoomInvite>[] };
   return (body.invites ?? []).flatMap((item) => {
     if (typeof item.id !== "string" || typeof item.fromId !== "string" || typeof item.fromName !== "string" || typeof item.roomCode !== "string") return [];
-    return [{ id: item.id, fromId: item.fromId, fromName: item.fromName, roomCode: item.roomCode }];
+    if (typeof item.createdAt !== "number" || typeof item.expiresAt !== "number") return [];
+    return [{
+      id: item.id,
+      fromId: item.fromId,
+      fromName: item.fromName,
+      roomCode: item.roomCode,
+      createdAt: item.createdAt,
+      expiresAt: item.expiresAt,
+    }];
   });
 }
 
