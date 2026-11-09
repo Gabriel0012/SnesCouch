@@ -38,7 +38,10 @@
           </div>
           <div id="picture" hidden>
             <button id="close-play" type="button" aria-label="Fechar jogo">×</button>
-            <canvas id="screen" width="256" height="224" hidden></canvas>
+            <div id="glass">
+              <canvas id="screen" width="256" height="224" hidden></canvas>
+              <canvas id="crt" aria-hidden="true"></canvas>
+            </div>
             <div id="play-chat" hidden>
               <div id="log" aria-live="polite"></div>
               <form id="chat" hidden>
@@ -60,6 +63,9 @@
             <button type="button" data-zoom="2">2×</button>
             <button type="button" data-zoom="3">3×</button>
             <button type="button" data-zoom="4">4×</button>
+            <button id="crt-toggle" type="button" aria-pressed="false" aria-label="Filtro CRT">
+              <img src="/crt.png" alt="" width="28" height="28">
+            </button>
             <button id="fullscreen" type="button" aria-label="Tela cheia"></button>
           </div>
           <div class="volume">

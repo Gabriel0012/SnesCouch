@@ -37,6 +37,7 @@ import { controlGuide, keyboardScheme, padLabel } from "./pads.ts";
 import { games, localGame, looksLikeSnesRom, matchRom, sha1Of, type Game } from "./rom.ts";
 import { OnlineSession, type ChatLine, type Role, type Seat } from "./session.ts";
 import { FIGHTERS, LEFT, RIGHT, SELECT, fighterLabel, superSteps, type Fighter } from "./supers.ts";
+import { bindScreen, setCrt, whenCrtDrops } from "./crt.ts";
 import { conceal, reveal, shown } from "./motion.ts";
 import { forgetRom, lastGame, loadRom, loadState, playerName, saveList, saveRom, saveSlots, saveState, setPlayerName, storedGames } from "./store.ts";
 import { startTour } from "./tour.ts";
@@ -91,18 +92,28 @@ const confirmText = document.querySelector<HTMLElement>("#confirm-text")!;
 const confirmYes = document.querySelector<HTMLButtonElement>("#confirm-yes")!;
 const confirmNo = document.querySelector<HTMLButtonElement>("#confirm-no")!;
 const picture = document.querySelector<HTMLElement>("#picture")!;
+const viewport = document.querySelector<HTMLElement>("#viewport")!;
 const savesModal = document.querySelector<HTMLElement>("#saves-modal")!;
 const savesGrid = document.querySelector<HTMLElement>("#saves-grid")!;
 const copyButton = document.querySelector<HTMLButtonElement>("#copy")!;
 const createButton = document.querySelector<HTMLButtonElement>("#create")!;
 const joinButton = document.querySelector<HTMLButtonElement>("#join")!;
 const volButton = document.querySelector<HTMLButtonElement>("#vol")!;
+const crtButton = document.querySelector<HTMLButtonElement>("#crt-toggle")!;
 const volSlider = document.querySelector<HTMLInputElement>("#vol-slider")!;
 const volReadout = document.querySelector<HTMLElement>("#vol-readout")!;
 
 let screen = document.querySelector<HTMLCanvasElement>("#screen")!;
 let transferred = false;
 let zoom: "fit" | "2" | "3" | "4" = "fit";
+const CRT_KEY = "snes-couch-crt";
+
+function storedCrt(): boolean {
+  try { return localStorage.getItem(CRT_KEY) === "1"; }
+  catch { return false; }
+}
+
+let crtOn = storedCrt();
 
 const shelf: Game[] = [...games, localGame];
 
@@ -320,6 +331,7 @@ function replaceScreen() {
   screen.replaceWith(next);
   screen = next;
   transferred = false;
+  bindScreen(screen);
   applyZoom();
 }
 
@@ -517,6 +529,8 @@ function onWorker(message: {
   if (message.t === "aspect" && message.w && message.h) {
     screen.style.aspectRatio = `${message.w} / ${message.h}`;
     picture.style.setProperty("--ratio", `${message.w} / ${message.h}`);
+    viewport.style.setProperty("--rw", String(message.w));
+    viewport.style.setProperty("--rh", String(message.h));
   }
   if (message.t === "local-input" && message.frames) session?.noteInputs(message.frames);
   if (message.t === "check" && message.frame !== undefined && message.hash !== undefined) {
@@ -1248,6 +1262,16 @@ function applyZoom() {
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-zoom]")) {
     button.classList.toggle("on", button.dataset.zoom === zoom);
   }
+}
+
+function paintCrt() {
+  crtButton.classList.toggle("on", crtOn);
+  crtButton.setAttribute("aria-pressed", crtOn ? "true" : "false");
+}
+
+function rememberCrt() {
+  try { localStorage.setItem(CRT_KEY, crtOn ? "1" : "0"); }
+  catch { /* a escolha vale só nesta visita */ }
 }
 
 function localControl(): string {
@@ -2139,6 +2163,15 @@ window.addEventListener("keyup", (event) => {
 });
 window.addEventListener("blur", () => releaseHistory());
 
+whenCrtDrops(() => {
+  crtOn = false;
+  paintCrt();
+  rememberCrt();
+});
+bindScreen(screen);
+if (crtOn && !setCrt(true)) crtOn = false;
+paintCrt();
+
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-zoom]")) {
   button.addEventListener("click", () => {
     const next = button.dataset.zoom;
@@ -2148,6 +2181,14 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-zoom]")
     }
   });
 }
+
+crtButton.addEventListener("click", () => {
+  crtOn = !crtOn;
+  if (crtOn && !setCrt(true)) crtOn = false;
+  if (!crtOn) setCrt(false);
+  paintCrt();
+  rememberCrt();
+});
 
 document.querySelector("#banner-close")!.addEventListener("click", () => setBanner(""));
 
