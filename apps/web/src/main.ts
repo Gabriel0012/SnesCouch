@@ -91,6 +91,7 @@ const log = document.querySelector<HTMLElement>("#log")!;
 const chatForm = document.querySelector<HTMLFormElement>("#chat")!;
 const chatInput = document.querySelector<HTMLInputElement>("#chat-text")!;
 const leaveButton = document.querySelector<HTMLButtonElement>("#leave")!;
+const swapButton = document.querySelector<HTMLButtonElement>("#swap")!;
 const confirmBox = document.querySelector<HTMLElement>("#confirm")!;
 const confirmText = document.querySelector<HTMLElement>("#confirm-text")!;
 const confirmYes = document.querySelector<HTMLButtonElement>("#confirm-yes")!;
@@ -859,7 +860,7 @@ function leaveComposer() {
 }
 
 function mySlot(): 0 | 1 {
-  return session?.role === "guest" ? 1 : 0;
+  return session?.playSlot() ?? 0;
 }
 
 function localTyping(on: boolean) {
@@ -983,7 +984,7 @@ let peoplePaints = 0;
 function renderPeople() {
   const [first, second] = padStatus();
   const key = session && roster
-    ? `sala:${session.role}:${roster.host.here}:${roster.host.control}:${roster.host.name}:${roster.guest.here}:${roster.guest.control}:${roster.guest.name}`
+    ? `sala:${session.role}:${session.playSlot()}:${roster.host.here}:${roster.host.control}:${roster.host.name}:${roster.guest.here}:${roster.guest.control}:${roster.guest.name}`
     : `local:${roomName()}:${first ?? ""}:${second ?? ""}`;
   if (key === peopleKey) return;
   peopleKey = key;
@@ -996,14 +997,23 @@ function renderPeople() {
     return;
   }
   const you = session.role;
-  playerLine(roster.host.name || "Anfitrião", roster.host.control, you === "host" ? "você" : roster.host.here ? "na sala" : "saiu", 0, animate);
-  playerLine(
-    roster.guest.name || "Convidado",
-    roster.guest.here ? roster.guest.control : "—",
-    you === "guest" ? "você" : roster.guest.here ? "na sala" : "aguardando",
-    1,
-    animate,
-  );
+  const mine = session.playSlot();
+  const hostSlot: 0 | 1 = you === "host" ? mine : (mine === 0 ? 1 : 0);
+  const seats = [
+    { slot: hostSlot, seat: roster.host, mine: you === "host", fallback: "Anfitrião", absent: "saiu" },
+    { slot: (hostSlot === 0 ? 1 : 0) as 0 | 1, seat: roster.guest, mine: you === "guest", fallback: "Convidado", absent: "aguardando" },
+  ].sort((a, b) => a.slot - b.slot);
+  seats.forEach((row, index) => {
+    const present = row.mine || row.seat.here;
+    const state = row.mine ? "você" : row.seat.here ? "na sala" : row.absent;
+    playerLine(
+      row.seat.name || row.fallback,
+      present ? row.seat.control || "Teclado" : "—",
+      `Jogador ${row.slot + 1} · ${state}`,
+      index,
+      animate,
+    );
+  });
 }
 
 function when(ms: number) {
@@ -1313,7 +1323,7 @@ async function readSlot(game: Game, slot: number, savedAt: number) {
     return;
   }
   if (!session.linked()) {
-    setBanner("O outro jogador ainda não entrou na partida.");
+    setBanner("A partida ainda não ligou.");
     return;
   }
   if (saveDialog) return;
@@ -1381,7 +1391,7 @@ async function connect(role: Role, code: string) {
       }
       setDelay(`Atraso de input: ${snapshot.delay} frames.`);
       const state = snapshot.state.slice();
-      const slot = mine.role === "host" ? 0 : 1;
+      const slot = mine.playSlot();
       worker?.postMessage(
         { t: "net-resume", slot, delay: snapshot.delay, frame: snapshot.frame, state: state.buffer },
         [state.buffer],
@@ -1419,6 +1429,7 @@ async function connect(role: Role, code: string) {
       setChatEnabled(false);
       setRoomCode(null);
       shown(leaveButton, false, "left");
+      shown(swapButton, false, "left");
       typingSent = false;
       hideConfirm();
       if (alertMode?.startsWith("reset")) closeAlert();
@@ -1449,6 +1460,13 @@ async function connect(role: Role, code: string) {
       saveDialog = { kind: "incoming", id: offer.id, state: offer.state };
       showConfirm(`${offer.name} quer carregar o save de ${offer.label} nos dois.`, "both");
     },
+    onSwap: () => {
+      peopleKey = "";
+      renderPeople();
+      if (!manual.hidden) fillManual();
+      setBanner(mine.playSlot() === 0 ? "Você agora é o jogador 1." : "Você agora é o jogador 2.");
+    },
+    onSwapBusy: () => setBanner("A troca já está indo."),
     onSaveAnswer: (id, yes) => {
       if (session !== mine || !saveDialog || saveDialog.kind === "offer" || saveDialog.id !== id) return;
       if (saveDialog.kind === "incoming") {
@@ -1472,6 +1490,7 @@ async function connect(role: Role, code: string) {
   session = mine;
   setRoomCode(code);
   shown(leaveButton, true, "left");
+  shown(swapButton, true, "left");
   const name = roomName();
   mine.setProfile(localControl(), name);
   setChatEnabled(true);
@@ -1482,6 +1501,7 @@ async function connect(role: Role, code: string) {
   } catch (error) {
     if (session === mine) session = null;
     shown(leaveButton, false, "left");
+    shown(swapButton, false, "left");
     setChatEnabled(false);
     setRoomCode(null);
     if (account && previousRoom) void queueRoom(null);
@@ -2305,6 +2325,7 @@ function leaveRoom() {
   setChatEnabled(false);
   setRoomCode(null);
   shown(leaveButton, false, "left");
+  shown(swapButton, false, "left");
   typingSent = false;
   hideConfirm();
   clearChat();
@@ -2318,6 +2339,18 @@ function leaveRoom() {
 }
 
 leaveButton.addEventListener("click", () => leaveRoom());
+
+swapButton.addEventListener("click", () => {
+  if (!session?.linked()) {
+    setBanner("A partida ainda não ligou.");
+    return;
+  }
+  if (!session.requestSwap()) {
+    setBanner("A troca já está indo.");
+    return;
+  }
+  if (session.role === "guest") setBanner("Pedindo a troca de jogadores…");
+});
 
 function roomDrawer(): boolean {
   return window.matchMedia("(max-width: 1080px)").matches;
@@ -2398,7 +2431,7 @@ confirmYes.addEventListener("click", () => {
   if (saveDialog.kind === "offer") {
     if (!session?.linked()) {
       hideConfirm();
-      setBanner("O outro jogador ainda não entrou na partida.");
+      setBanner("A partida ainda não ligou.");
       return;
     }
     const id = session.proposeSave(saveDialog.label, saveDialog.state);
@@ -2797,7 +2830,7 @@ alertYes.addEventListener("click", () => {
   if (mode === "reset-ask") {
     if (!session?.proposeReset()) {
       closeAlert();
-      setBanner("O outro jogador ainda não entrou na partida.");
+      setBanner("A partida ainda não ligou.");
       return;
     }
     openAlert("reset-wait");
@@ -2837,7 +2870,8 @@ function pollSupers(padsNow: [number, number], mode: "local" | "online") {
       if (padsNow[port] & SELECT) {
         const next = (FIGHTERS.indexOf(fighters[port]) + 1) % FIGHTERS.length;
         fighters[port] = FIGHTERS[next];
-        setBanner(`Super do jogador ${port + 1}: ${fighterLabel(fighters[port])}.`);
+        const player = session && port === 0 ? mySlot() + 1 : port + 1;
+        setBanner(`Super do jogador ${player}: ${fighterLabel(fighters[port])}.`);
       } else {
         const forward = padsNow[port] & LEFT ? LEFT : padsNow[port] & RIGHT ? RIGHT : facing[port];
         worker.postMessage({ t: "super", port, steps: superSteps(fighters[port], forward) });

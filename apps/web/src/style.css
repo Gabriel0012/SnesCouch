@@ -1511,6 +1511,7 @@ a.login:active { transform: translate(2px, 2px); box-shadow: inset -3px -3px 0 v
 .pad-icon.pad-color { filter: none; }
 .people b, .keys b { color: var(--signal); }
 .people small { display: block; color: var(--muted); font-size: 13px; }
+#swap { margin-top: 0.75rem; }
 #delay { min-height: 1.2rem; margin: 0.45rem 0 0; }
 
 

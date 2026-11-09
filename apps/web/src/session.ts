@@ -12,10 +12,11 @@ import { delayFromRtt } from "../../../packages/net/lockstep.ts";
 
 export type Role = "host" | "guest";
 
-interface SignalOffer { kind: "offer"; sdp: string }
-interface SignalAnswer { kind: "answer"; sdp: string }
-interface SignalIce { kind: "ice"; candidate: RTCIceCandidateInit | null }
-type Signal = SignalOffer | SignalAnswer | SignalIce;
+interface SignalOffer { kind: "offer"; sdp: string; gen?: number }
+interface SignalAnswer { kind: "answer"; sdp: string; gen?: number }
+interface SignalIce { kind: "ice"; candidate: RTCIceCandidateInit | null; gen?: number }
+interface SignalReady { kind: "ready"; gen?: number }
+type Signal = SignalOffer | SignalAnswer | SignalIce | SignalReady;
 
 export interface Snapshot {
   frame: number;
@@ -57,6 +58,8 @@ interface SessionOptions {
   onRoster: (roster: { host: Seat; guest: Seat }) => void;
   onSaveOffer: (offer: { id: number; name: string; label: string; state: Uint8Array }) => void;
   onSaveAnswer: (id: number, yes: boolean) => void;
+  onSwap: (slot: 0 | 1) => void;
+  onSwapBusy: () => void;
   checkpoint: () => Promise<Snapshot>;
 }
 
@@ -74,7 +77,7 @@ export class OnlineSession {
   private pc: RTCPeerConnection | null = null;
   private channel: RTCDataChannel | null = null;
   private iceServers: RTCIceServer[] = [];
-  private pendingIce: RTCIceCandidateInit[] = [];
+  private pendingIce: { gen: number; candidate: RTCIceCandidateInit }[] = [];
   private outgoing = new Map<number, number>();
   private assembler = new StateAssembler();
   private started = false;
@@ -98,6 +101,20 @@ export class OnlineSession {
   private name = "";
   private opened = false;
   private attempts = 0;
+  private offerGen = 0;
+  private offeredAt = 0;
+  private retryNotBefore = 0;
+  private linkTries = 0;
+  private guestNudge = 0;
+  private linkTimer = 0;
+  private linkToken = 0;
+  private syncTimer = 0;
+  private syncSends = 0;
+  private syncedFrame = -1;
+  private synced = false;
+  private swapBusy = false;
+  private swapAsked = false;
+  private gate: Promise<void> = Promise.resolve();
 
   constructor(private opts: SessionOptions) {
     this.slot = opts.role === "host" ? 0 : 1;
@@ -105,6 +122,26 @@ export class OnlineSession {
 
   get role(): Role {
     return this.opts.role;
+  }
+
+  playSlot(): 0 | 1 {
+    return this.slot;
+  }
+
+  requestSwap(): boolean {
+    if (this.closed || !this.linked()) return false;
+    if (this.opts.role === "host") {
+      if (this.swapBusy) return false;
+      this.beginSwap();
+      return true;
+    }
+    if (this.swapAsked) return false;
+    this.swapAsked = true;
+    this.sendJson({ t: "swap-ask" });
+    window.setTimeout(() => {
+      this.swapAsked = false;
+    }, 3000);
+    return true;
   }
 
   async open() {
@@ -201,8 +238,12 @@ export class OnlineSession {
   close() {
     this.closed = true;
     this.resetOffer = null;
+    this.swapBusy = false;
+    this.swapAsked = false;
     window.clearInterval(this.pingTimer);
     window.clearInterval(this.resendTimer);
+    window.clearTimeout(this.linkTimer);
+    window.clearTimeout(this.syncTimer);
     this.channel?.close();
     this.pc?.close();
     this.ws?.close();
@@ -245,9 +286,12 @@ export class OnlineSession {
         guest?: Seat;
         on?: boolean;
       };
-      if (message.t === "peer") void this.attachPeer();
+      if (message.t === "peer") this.onPeer();
       if (message.t === "peer-left") this.onPeerLeft();
-      if (message.t === "signal" && message.data) void this.onSignal(message.data);
+      if (message.t === "signal" && message.data) {
+        const data = message.data;
+        this.kick(() => this.onSignal(data));
+      }
       if (message.t === "typing" && (message.from === "host" || message.from === "guest")) {
         this.opts.onTyping(message.from, message.on === true);
       }
@@ -301,65 +345,227 @@ export class OnlineSession {
     this.socketSend({ t: "signal", data });
   }
 
-  private async attachPeer() {
-    this.pc?.close();
-    this.pendingIce = [];
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
-    this.pc = pc;
-    pc.onicecandidate = (event) => {
-      this.signal({ kind: "ice", candidate: event.candidate?.toJSON() ?? null });
-    };
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "failed" && this.opts.role === "host") void this.restartIce();
-    };
-    pc.ondatachannel = (event) => this.bindChannel(event.channel);
-    if (this.opts.role === "host") {
-      this.bindChannel(pc.createDataChannel("play", { ordered: true }));
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      this.signal({ kind: "offer", sdp: offer.sdp ?? "" });
-    }
+  private kick(task: () => Promise<void>) {
+    this.gate = this.gate.then(task).then(() => undefined, () => undefined);
   }
 
-  private async restartIce() {
-    if (!this.pc) return;
-    const offer = await this.pc.createOffer({ iceRestart: true });
-    await this.pc.setLocalDescription(offer);
-    this.signal({ kind: "offer", sdp: offer.sdp ?? "" });
+  private onPeer() {
+    this.linkTries = 0;
+    this.guestNudge = 0;
+    this.retryNotBefore = 0;
+    this.offeredAt = 0;
+    if (this.opts.role === "host") this.kick(() => this.startOffer());
+    else this.armRetry();
+  }
+
+  private dialing(): boolean {
+    const pc = this.pc;
+    if (!pc || this.offeredAt <= 0 || performance.now() - this.offeredAt >= 8000) return false;
+    if (pc.connectionState === "failed" || pc.connectionState === "closed" || pc.iceConnectionState === "failed") return false;
+    const state = this.channel?.readyState;
+    return state == null || state === "connecting";
+  }
+
+  private requestRetry() {
+    if (this.closed || this.opts.role !== "host" || this.channel?.readyState === "open") return;
+    if (performance.now() < this.retryNotBefore) return;
+    if (this.linkTries >= 4) {
+      this.opts.onStatus("Não deu para ligar a partida.");
+      return;
+    }
+    this.linkTries += 1;
+    this.retryNotBefore = performance.now() + 8000;
+    this.opts.onStatus("Ligando a partida de novo…");
+    this.kick(() => this.startOffer());
+  }
+
+  private armRetry() {
+    window.clearTimeout(this.linkTimer);
+    const token = ++this.linkToken;
+    const wait = this.opts.role === "guest" && this.offerGen === 0 ? 3000 : 8000;
+    this.linkTimer = window.setTimeout(() => {
+      if (token !== this.linkToken || this.closed || this.channel?.readyState === "open") return;
+      if (this.opts.role === "host") {
+        this.retryNotBefore = 0;
+        this.requestRetry();
+        return;
+      }
+      if (this.guestNudge >= 4) {
+        this.opts.onStatus("Não deu para ligar a partida.");
+        return;
+      }
+      this.guestNudge += 1;
+      this.opts.onStatus("Ligando a partida de novo…");
+      this.signal({ kind: "ready", gen: this.offerGen });
+      this.armRetry();
+    }, wait);
+  }
+
+  private waitIce(pc: RTCPeerConnection): Promise<void> {
+    if (pc.iceGatheringState === "complete" || pc.connectionState === "closed") return Promise.resolve();
+    return new Promise((resolve) => {
+      const finish = () => {
+        pc.removeEventListener("icegatheringstatechange", onState);
+        window.clearTimeout(timer);
+        resolve();
+      };
+      const onState = () => {
+        if (pc.iceGatheringState === "complete") finish();
+      };
+      pc.addEventListener("icegatheringstatechange", onState);
+      const timer = window.setTimeout(finish, 2000);
+    });
+  }
+
+  private newPeer(gen: number): RTCPeerConnection {
+    const previous = this.pc;
+    this.channel = null;
+    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
+    this.pc = pc;
+    previous?.close();
+    pc.onicecandidate = (event) => {
+      if (gen !== this.offerGen || pc !== this.pc) return;
+      this.signal({ kind: "ice", candidate: event.candidate?.toJSON() ?? null, gen });
+    };
+    const failed = () => {
+      if (pc !== this.pc || this.closed) return;
+      if (pc.connectionState !== "failed" && pc.iceConnectionState !== "failed") return;
+      this.offeredAt = 0;
+      this.retryNotBefore = 0;
+      if (this.opts.role === "host") this.requestRetry();
+      else this.signal({ kind: "ready", gen });
+    };
+    pc.onconnectionstatechange = failed;
+    pc.oniceconnectionstatechange = failed;
+    pc.ondatachannel = (event) => {
+      if (pc !== this.pc) return;
+      this.bindChannel(event.channel);
+    };
+    return pc;
+  }
+
+  private async startOffer() {
+    if (this.closed || this.opts.role !== "host" || this.channel?.readyState === "open" || this.dialing()) return;
+    const gen = ++this.offerGen;
+    if (!this.synced) {
+      this.started = false;
+      this.resumed = false;
+      this.awaitingSync = false;
+      this.epoch += 1;
+    }
+    this.assembler = new StateAssembler();
+    this.retryNotBefore = performance.now() + 8000;
+    const pc = this.newPeer(gen);
+    this.bindChannel(pc.createDataChannel("play", { ordered: true }));
+    try {
+      const offer = await pc.createOffer();
+      if (gen !== this.offerGen || this.closed || pc !== this.pc) return;
+      await pc.setLocalDescription(offer);
+      await this.waitIce(pc);
+      if (gen !== this.offerGen || this.closed || pc !== this.pc) return;
+      const sdp = pc.localDescription?.sdp || offer.sdp || "";
+      if (!sdp) throw new Error("sdp");
+      this.offeredAt = performance.now();
+      this.signal({ kind: "offer", sdp, gen });
+    } catch {
+      if (gen !== this.offerGen || this.closed) return;
+      this.offeredAt = 0;
+      this.retryNotBefore = 0;
+      this.requestRetry();
+      return;
+    }
+    this.armRetry();
   }
 
   private async onSignal(data: Signal) {
-    if (!this.pc) return;
-    if (data.kind === "offer") {
-      await this.pc.setRemoteDescription({ type: "offer", sdp: data.sdp });
-      const answer = await this.pc.createAnswer();
-      await this.pc.setLocalDescription(answer);
-      this.signal({ kind: "answer", sdp: answer.sdp ?? "" });
-      await this.flushIce();
-    } else if (data.kind === "answer") {
-      await this.pc.setRemoteDescription({ type: "answer", sdp: data.sdp });
-      await this.flushIce();
-    } else if (data.candidate) {
-      if (!this.pc.remoteDescription) this.pendingIce.push(data.candidate);
-      else await this.pc.addIceCandidate(data.candidate);
+    const gen = typeof data.gen === "number" ? data.gen : 0;
+    if (data.kind === "ready") {
+      if (this.opts.role !== "host" || this.channel?.readyState === "open" || this.dialing()) return;
+      this.offeredAt = 0;
+      this.retryNotBefore = 0;
+      if (this.offerGen === 0) {
+        await this.startOffer();
+        return;
+      }
+      this.requestRetry();
+      return;
     }
+    if (data.kind === "offer") {
+      await this.acceptOffer(data.sdp, gen);
+      return;
+    }
+    if (data.kind === "answer") {
+      await this.acceptAnswer(data.sdp, gen);
+      return;
+    }
+    if (data.kind === "ice") await this.applyIce(gen, data.candidate);
   }
 
-  private async flushIce() {
-    const queued = this.pendingIce.splice(0);
-    for (const candidate of queued) {
-      if (this.pc) await this.pc.addIceCandidate(candidate);
+  private async acceptOffer(sdp: string, gen: number) {
+    if (this.opts.role !== "guest" || this.closed || !sdp || gen < this.offerGen) return;
+    if (gen === this.offerGen && (this.channel?.readyState === "open" || this.dialing())) return;
+    this.offerGen = gen;
+    if (!this.synced) {
+      this.started = false;
+      this.resumed = false;
+      this.awaitingSync = false;
+    }
+    this.assembler = new StateAssembler();
+    const pc = this.newPeer(gen);
+    await pc.setRemoteDescription({ type: "offer", sdp });
+    if (gen !== this.offerGen || pc !== this.pc || this.closed) return;
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await this.waitIce(pc);
+    if (gen !== this.offerGen || pc !== this.pc || this.closed) return;
+    this.offeredAt = performance.now();
+    this.signal({ kind: "answer", sdp: pc.localDescription?.sdp || answer.sdp || "", gen });
+    await this.flushIce(gen);
+    this.armRetry();
+  }
+
+  private async acceptAnswer(sdp: string, gen: number) {
+    if (this.opts.role !== "host" || this.closed || !this.pc || !sdp || gen !== this.offerGen) return;
+    if (this.pc.signalingState !== "have-local-offer") return;
+    await this.pc.setRemoteDescription({ type: "answer", sdp });
+    await this.flushIce(gen);
+  }
+
+  private async applyIce(gen: number, candidate: RTCIceCandidateInit | null) {
+    if (!candidate || (this.offerGen !== 0 && gen < this.offerGen)) return;
+    const pc = this.pc;
+    if (!pc || pc.signalingState === "closed" || gen !== this.offerGen || !pc.remoteDescription) {
+      this.pendingIce.push({ gen, candidate });
+      if (this.pendingIce.length > 64) this.pendingIce.splice(0, this.pendingIce.length - 64);
+      return;
+    }
+    try { await pc.addIceCandidate(candidate); }
+    catch { /* o candidato já entrou no anúncio, ou é de uma tentativa anterior */ }
+  }
+
+  private async flushIce(gen: number) {
+    const mine = this.pendingIce.filter((item) => item.gen === gen);
+    this.pendingIce = this.pendingIce.filter((item) => item.gen > gen);
+    for (const item of mine) {
+      if (!this.pc || this.pc.signalingState === "closed") return;
+      try { await this.pc.addIceCandidate(item.candidate); }
+      catch { /* o candidato já entrou no anúncio */ }
     }
   }
 
   private bindChannel(channel: RTCDataChannel) {
+    const gen = this.offerGen;
     channel.binaryType = "arraybuffer";
     channel.onopen = () => {
+      if (gen !== this.offerGen || this.closed) return;
       this.channel = channel;
       this.awaitingSync = false;
       this.resumed = false;
+      this.linkTries = 0;
+      this.guestNudge = 0;
       window.clearInterval(this.resendTimer);
       this.resendTimer = window.setInterval(() => this.flushInputs(), 50);
+      window.clearTimeout(this.linkTimer);
       this.reconnectUntil = 0;
       this.opts.onPause();
       if (!this.started) {
@@ -368,24 +574,29 @@ export class OnlineSession {
           this.pingAt = performance.now();
           this.sendJson({ t: "ping", ms: this.pingAt });
           window.setTimeout(() => {
-            if (!this.started && !this.closed) void this.align(3);
+            if (!this.started && !this.closed && gen === this.offerGen) void this.align(3);
           }, 1000);
         }
       } else if (this.opts.role === "host") {
         void this.pushCheckpoint();
       }
     };
-    channel.onmessage = (event) => this.onPlay(event.data);
+    channel.onmessage = (event) => {
+      if (gen !== this.offerGen) return;
+      this.onPlay(event.data);
+    };
     channel.onclose = () => {
-      if (this.channel === channel) {
-        this.awaitingSync = false;
-        this.resumed = false;
-      }
-      if (this.closed || this.channel !== channel) return;
+      if (gen !== this.offerGen || this.closed) return;
+      if (this.channel && this.channel !== channel) return;
+      this.awaitingSync = false;
+      this.resumed = false;
+      this.offeredAt = 0;
       this.opts.onPause();
-      this.opts.onStatus("Conexão caiu. Tentando de novo por 15s.");
+      this.opts.onStatus("Conexão caiu. Tentando de novo…");
       this.reconnectUntil = performance.now() + 15000;
-      if (this.opts.role === "host") void this.restartIce();
+      this.retryNotBefore = 0;
+      if (this.opts.role === "host") this.requestRetry();
+      else this.signal({ kind: "ready", gen });
     };
   }
 
@@ -401,6 +612,7 @@ export class OnlineSession {
     const chosen = Number.isFinite(delay) ? Math.round(delay) : 2;
     this.delay = Math.min(8, Math.max(2, chosen));
     const epoch = this.epoch;
+    this.syncSends = 0;
     const snapshot = await this.opts.checkpoint();
     if (this.closed || epoch !== this.epoch) return;
     this.sendSnapshot(0, snapshot.state);
@@ -419,15 +631,32 @@ export class OnlineSession {
     this.opts.onReset({ slot: this.slot, delay });
   }
 
+  private beginSwap() {
+    if (this.swapBusy || this.closed || !this.linked()) return;
+    this.swapBusy = true;
+    this.slot = this.slot === 0 ? 1 : 0;
+    this.epoch += 1;
+    this.outgoing.clear();
+    this.sendJson({ t: "swap", slot: this.slot });
+    this.opts.onSwap(this.slot);
+    const epoch = this.epoch;
+    void this.pushCheckpoint().finally(() => {
+      if (this.epoch === epoch) this.swapBusy = false;
+    });
+  }
+
   private async pushCheckpoint() {
     const epoch = this.epoch;
+    this.syncSends = 0;
     const snapshot = await this.opts.checkpoint();
     if (this.closed || epoch !== this.epoch) return;
     this.sendSnapshot(snapshot.frame, snapshot.state);
   }
 
   private sendSnapshot(frame: number, state: Uint8Array) {
-    if (!this.channel || this.channel.readyState !== "open") return;
+    const channel = this.channel;
+    const gen = this.offerGen;
+    if (!channel || channel.readyState !== "open") return;
     if (!state.byteLength || this.delay < 1) {
       this.fail("Não deu para alinhar a partida.");
       return;
@@ -436,12 +665,18 @@ export class OnlineSession {
     this.awaitingSync = true;
     const hash = fnv(state);
     try {
-      for (const chunk of encodeStateChunks(frame, this.delay, hash, state)) {
-        this.channel.send(chunk);
-      }
+      for (const chunk of encodeStateChunks(frame, this.delay, hash, state)) channel.send(chunk);
     } catch {
-      this.fail("Não deu para alinhar a partida.");
+      if (this.offerGen === gen && this.channel === channel) this.fail("Não deu para alinhar a partida.");
+      return;
     }
+    this.syncSends += 1;
+    window.clearTimeout(this.syncTimer);
+    if (this.syncSends >= 3) return;
+    this.syncTimer = window.setTimeout(() => {
+      if (this.closed || !this.awaitingSync || !this.lastSnapshot || this.offerGen !== gen) return;
+      this.sendSnapshot(this.lastSnapshot.frame, this.lastSnapshot.state);
+    }, 2000);
   }
 
   private onPlay(data: unknown) {
@@ -457,7 +692,22 @@ export class OnlineSession {
         id?: number;
         name?: string;
         label?: string;
+        slot?: number;
       };
+      if (message.t === "swap-ask" && this.opts.role === "host") {
+        if (this.swapBusy || !this.linked()) this.sendJson({ t: "swap-busy" });
+        else this.beginSwap();
+      }
+      if (message.t === "swap-busy" && this.opts.role === "guest") {
+        this.swapAsked = false;
+        this.opts.onSwapBusy();
+      }
+      if (message.t === "swap" && this.opts.role === "guest" && (message.slot === 0 || message.slot === 1)) {
+        this.swapAsked = false;
+        this.slot = message.slot === 0 ? 1 : 0;
+        this.outgoing.clear();
+        this.opts.onSwap(this.slot);
+      }
       if (message.t === "reset-ask" && this.started) {
         const name = message.name?.trim() || "O outro jogador";
         if (this.resetOffer === "out") {
@@ -509,9 +759,12 @@ export class OnlineSession {
         this.opts.onCheck(message.frame, message.hash);
       }
       if (message.t === "sync-ok" && this.awaitingSync && this.lastSnapshot && !this.resumed) {
+        window.clearTimeout(this.syncTimer);
         this.awaitingSync = false;
         this.resumed = true;
         this.started = true;
+        this.synced = true;
+        this.linkTries = 0;
         this.opts.onResume(this.lastSnapshot);
       }
       return;
@@ -544,15 +797,28 @@ export class OnlineSession {
       this.fail("O estado da partida chegou incompleto.");
       return;
     }
-    if (done.delay < 1 || this.resumed) return;
+    if (done.delay < 1) return;
+    if (this.resumed) {
+      if (done.frame === this.syncedFrame) this.sendJson({ t: "sync-ok" });
+      return;
+    }
+    this.syncedFrame = done.frame;
     this.started = true;
     this.resumed = true;
+    this.synced = true;
     this.delay = done.delay;
+    this.linkTries = 0;
+    this.guestNudge = 0;
+    window.clearTimeout(this.linkTimer);
     this.opts.onResume({ frame: done.frame, state: done.bytes, delay: done.delay });
     this.sendJson({ t: "sync-ok" });
   }
 
   private onPeerLeft() {
+    window.clearTimeout(this.linkTimer);
+    this.swapBusy = false;
+    this.swapAsked = false;
+    this.offeredAt = 0;
     this.awaitingSync = false;
     this.resumed = false;
     this.opts.onPause();

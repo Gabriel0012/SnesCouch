@@ -351,7 +351,6 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
     }
     checkpoint = state;
     checkpointFrame = message.frame;
-    pendingRemote.length = 0;
     beginNet(message.slot === 1 ? 1 : 0, message.delay, message.frame);
   }
 };
