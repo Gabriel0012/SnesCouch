@@ -39,24 +39,14 @@ export class Room implements DurableObject {
     if (role !== "host" && role !== "guest") {
       return new Response("Papel inválido.", { status: 400 });
     }
-    if (!game || sha1 !== game.sha1) {
-      return new Response("Jogo ou hash recusado.", { status: 400 });
-    }
-    if (role === "guest" && !this.alive(this.host)) {
-      return new Response("A sala ainda não existe.", { status: 404 });
-    }
+    if (!game || sha1 !== game.sha1) return this.refuse("Jogo ou hash recusado.");
+    if (role === "guest" && !this.alive(this.host)) return this.refuse("A sala ainda não existe.");
     if (role === "guest" && (gameId !== this.gameId || sha1 !== this.sha1)) {
-      return new Response("A ROM não é a mesma da sala.", { status: 409 });
+      const roomGame = catalog.games.find((entry) => entry.id === this.gameId);
+      const title = roomGame?.title ?? "outro jogo";
+      return this.refuse(`A sala está em ${title}. Abre esse jogo antes de entrar.`);
     }
-    if (role === "host" && this.alive(this.host)) {
-      if (this.alive(this.guest)) return new Response("Sala ocupada.", { status: 409 });
-      const previous = this.host;
-      this.host = null;
-      try { previous.close(4000, "Nova conexão."); } catch { /* o socket antigo já caiu */ }
-    }
-    if (role === "guest" && this.alive(this.guest)) {
-      return new Response("Sala cheia.", { status: 409 });
-    }
+    this.replace(role);
 
     const pair = new WebSocketPair();
     const client = pair[0];
@@ -99,6 +89,22 @@ export class Room implements DurableObject {
     this.send(this.guest, message);
   }
 
+  private refuse(reason: string): Response {
+    const pair = new WebSocketPair();
+    const server = pair[1];
+    server.accept();
+    server.close(4000, reason.slice(0, 120));
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+
+  private replace(role: "host" | "guest") {
+    const current = role === "host" ? this.host : this.guest;
+    if (role === "host") this.host = null;
+    else this.guest = null;
+    if (!this.alive(current)) return;
+    try { current.close(4000, "A sala abriu em outro lugar."); } catch { /* o socket antigo já caiu */ }
+  }
+
   private alive(socket: WebSocket | null): socket is WebSocket {
     return socket !== null && socket.readyState === WebSocket.OPEN;
   }
@@ -127,6 +133,14 @@ export class Room implements DurableObject {
     }
     if (message.t === "signal") {
       this.send(this.other(socket), { t: "signal", data: message.data });
+      return;
+    }
+    if (message.t === "relay") {
+      const body = message as { data?: unknown; bin?: unknown };
+      const data = typeof body.data === "string" && body.data.length <= 8000 ? body.data : undefined;
+      const bin = typeof body.bin === "string" && body.bin.length <= 20000 ? body.bin : undefined;
+      if (!data && !bin) return;
+      this.send(this.other(socket), data ? { t: "relay", data } : { t: "relay", bin });
       return;
     }
     const role = sockets.get(socket)?.role;

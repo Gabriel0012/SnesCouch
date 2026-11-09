@@ -12,12 +12,6 @@ import { delayFromRtt } from "../../../packages/net/lockstep.ts";
 
 export type Role = "host" | "guest";
 
-interface SignalOffer { kind: "offer"; sdp: string; gen?: number }
-interface SignalAnswer { kind: "answer"; sdp: string; gen?: number }
-interface SignalIce { kind: "ice"; candidate: RTCIceCandidateInit | null; gen?: number }
-interface SignalReady { kind: "ready"; gen?: number }
-type Signal = SignalOffer | SignalAnswer | SignalIce | SignalReady;
-
 export interface Snapshot {
   frame: number;
   state: Uint8Array;
@@ -72,12 +66,25 @@ function fnv(bytes: Uint8Array) {
   return hash >>> 0;
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + step));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(value: string): ArrayBuffer {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
 export class OnlineSession {
   private ws: WebSocket | null = null;
-  private pc: RTCPeerConnection | null = null;
-  private channel: RTCDataChannel | null = null;
-  private iceServers: RTCIceServer[] = [];
-  private pendingIce: { gen: number; candidate: RTCIceCandidateInit }[] = [];
+  private peerHere = false;
   private outgoing = new Map<number, number>();
   private assembler = new StateAssembler();
   private started = false;
@@ -101,20 +108,12 @@ export class OnlineSession {
   private name = "";
   private opened = false;
   private attempts = 0;
-  private offerGen = 0;
-  private offeredAt = 0;
-  private retryNotBefore = 0;
-  private linkTries = 0;
-  private guestNudge = 0;
-  private linkTimer = 0;
-  private linkToken = 0;
   private syncTimer = 0;
   private syncSends = 0;
   private syncedFrame = -1;
   private synced = false;
   private swapBusy = false;
   private swapAsked = false;
-  private gate: Promise<void> = Promise.resolve();
 
   constructor(private opts: SessionOptions) {
     this.slot = opts.role === "host" ? 0 : 1;
@@ -145,10 +144,6 @@ export class OnlineSession {
   }
 
   async open() {
-    const response = await fetch("/api/ice");
-    if (!response.ok) throw new Error("O servidor de sala não respondeu.");
-    const body = await response.json() as { iceServers: RTCIceServer[] };
-    this.iceServers = body.iceServers;
     this.connectSocket();
   }
 
@@ -174,7 +169,7 @@ export class OnlineSession {
   }
 
   linked(): boolean {
-    return this.started && this.channel?.readyState === "open";
+    return this.started && this.peerHere && this.ws?.readyState === WebSocket.OPEN;
   }
 
   inputDelay(): number {
@@ -184,8 +179,8 @@ export class OnlineSession {
   proposeSave(label: string, state: Uint8Array): number {
     const id = ++this.saveSeq;
     this.sendJson({ t: "save-ask", id, name: this.name, label });
-    if (this.channel?.readyState === "open") {
-      for (const chunk of encodeSaveChunks(id, fnv(state), state)) this.channel.send(chunk);
+    if (this.peerHere && this.ws?.readyState === WebSocket.OPEN) {
+      for (const chunk of encodeSaveChunks(id, fnv(state), state)) this.relayBytes(chunk);
     }
     return id;
   }
@@ -206,7 +201,7 @@ export class OnlineSession {
   }
 
   proposeReset(): boolean {
-    if (this.closed || this.channel?.readyState !== "open" || !this.started || this.resetOffer) return false;
+    if (this.closed || !this.linked() || this.resetOffer) return false;
     this.resetOffer = "out";
     this.sendJson({ t: "reset-ask", name: this.name || "O outro jogador" });
     return true;
@@ -240,12 +235,10 @@ export class OnlineSession {
     this.resetOffer = null;
     this.swapBusy = false;
     this.swapAsked = false;
+    this.peerHere = false;
     window.clearInterval(this.pingTimer);
     window.clearInterval(this.resendTimer);
-    window.clearTimeout(this.linkTimer);
     window.clearTimeout(this.syncTimer);
-    this.channel?.close();
-    this.pc?.close();
     this.ws?.close();
   }
 
@@ -276,7 +269,6 @@ export class OnlineSession {
     socket.onmessage = (event) => {
       const message = JSON.parse(String(event.data)) as {
         t?: string;
-        data?: Signal;
         from?: Role;
         name?: string;
         text?: string;
@@ -285,12 +277,15 @@ export class OnlineSession {
         host?: Seat;
         guest?: Seat;
         on?: boolean;
+        data?: string;
+        bin?: string;
       };
       if (message.t === "peer") this.onPeer();
       if (message.t === "peer-left") this.onPeerLeft();
-      if (message.t === "signal" && message.data) {
-        const data = message.data;
-        this.kick(() => this.onSignal(data));
+      if (message.t === "relay") {
+        if (typeof message.bin === "string") {
+          try { this.onPlay(base64ToBytes(message.bin)); } catch { /* pedaço inválido */ }
+        } else if (typeof message.data === "string") this.onPlay(message.data);
       }
       if (message.t === "typing" && (message.from === "host" || message.from === "guest")) {
         this.opts.onTyping(message.from, message.on === true);
@@ -308,9 +303,16 @@ export class OnlineSession {
         this.opts.onRoster({ host: message.host, guest: message.guest });
       }
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       window.clearTimeout(giveUp);
       if (this.closed || this.ws !== socket) return;
+      this.peerHere = false;
+      const reason = event.reason?.trim();
+      if (reason) {
+        this.opts.onClose(reason);
+        this.close();
+        return;
+      }
       if (!this.opened) {
         this.attempts += 1;
         if (this.attempts < 4) {
@@ -341,263 +343,37 @@ export class OnlineSession {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(message));
   }
 
-  private signal(data: Signal) {
-    this.socketSend({ t: "signal", data });
+  private relay(body: { data?: string; bin?: string }): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
+    this.socketSend({ t: "relay", ...body });
+    return true;
   }
 
-  private kick(task: () => Promise<void>) {
-    this.gate = this.gate.then(task).then(() => undefined, () => undefined);
+  private relayBytes(buf: ArrayBuffer): boolean {
+    return this.relay({ bin: bytesToBase64(new Uint8Array(buf)) });
   }
 
   private onPeer() {
-    this.linkTries = 0;
-    this.guestNudge = 0;
-    this.retryNotBefore = 0;
-    this.offeredAt = 0;
-    if (this.opts.role === "host") this.kick(() => this.startOffer());
-    else this.armRetry();
-  }
-
-  private dialing(): boolean {
-    const pc = this.pc;
-    if (!pc || this.offeredAt <= 0 || performance.now() - this.offeredAt >= 8000) return false;
-    if (pc.connectionState === "failed" || pc.connectionState === "closed" || pc.iceConnectionState === "failed") return false;
-    const state = this.channel?.readyState;
-    return state == null || state === "connecting";
-  }
-
-  private requestRetry() {
-    if (this.closed || this.opts.role !== "host" || this.channel?.readyState === "open") return;
-    if (performance.now() < this.retryNotBefore) return;
-    if (this.linkTries >= 4) {
-      this.opts.onStatus("Não deu para ligar a partida.");
-      return;
-    }
-    this.linkTries += 1;
-    this.retryNotBefore = performance.now() + 8000;
-    this.opts.onStatus("Ligando a partida de novo…");
-    this.kick(() => this.startOffer());
-  }
-
-  private armRetry() {
-    window.clearTimeout(this.linkTimer);
-    const token = ++this.linkToken;
-    const wait = this.opts.role === "guest" && this.offerGen === 0 ? 3000 : 8000;
-    this.linkTimer = window.setTimeout(() => {
-      if (token !== this.linkToken || this.closed || this.channel?.readyState === "open") return;
-      if (this.opts.role === "host") {
-        this.retryNotBefore = 0;
-        this.requestRetry();
-        return;
-      }
-      if (this.guestNudge >= 4) {
-        this.opts.onStatus("Não deu para ligar a partida.");
-        return;
-      }
-      this.guestNudge += 1;
-      this.opts.onStatus("Ligando a partida de novo…");
-      this.signal({ kind: "ready", gen: this.offerGen });
-      this.armRetry();
-    }, wait);
-  }
-
-  private waitIce(pc: RTCPeerConnection): Promise<void> {
-    if (pc.iceGatheringState === "complete" || pc.connectionState === "closed") return Promise.resolve();
-    return new Promise((resolve) => {
-      const finish = () => {
-        pc.removeEventListener("icegatheringstatechange", onState);
-        window.clearTimeout(timer);
-        resolve();
-      };
-      const onState = () => {
-        if (pc.iceGatheringState === "complete") finish();
-      };
-      pc.addEventListener("icegatheringstatechange", onState);
-      const timer = window.setTimeout(finish, 2000);
-    });
-  }
-
-  private newPeer(gen: number): RTCPeerConnection {
-    const previous = this.pc;
-    this.channel = null;
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
-    this.pc = pc;
-    previous?.close();
-    pc.onicecandidate = (event) => {
-      if (gen !== this.offerGen || pc !== this.pc) return;
-      this.signal({ kind: "ice", candidate: event.candidate?.toJSON() ?? null, gen });
-    };
-    const failed = () => {
-      if (pc !== this.pc || this.closed) return;
-      if (pc.connectionState !== "failed" && pc.iceConnectionState !== "failed") return;
-      this.offeredAt = 0;
-      this.retryNotBefore = 0;
-      if (this.opts.role === "host") this.requestRetry();
-      else this.signal({ kind: "ready", gen });
-    };
-    pc.onconnectionstatechange = failed;
-    pc.oniceconnectionstatechange = failed;
-    pc.ondatachannel = (event) => {
-      if (pc !== this.pc) return;
-      this.bindChannel(event.channel);
-    };
-    return pc;
-  }
-
-  private async startOffer() {
-    if (this.closed || this.opts.role !== "host" || this.channel?.readyState === "open" || this.dialing()) return;
-    const gen = ++this.offerGen;
-    if (!this.synced) {
-      this.started = false;
-      this.resumed = false;
-      this.awaitingSync = false;
-      this.epoch += 1;
-    }
+    if (this.closed) return;
+    this.peerHere = true;
+    this.awaitingSync = false;
+    this.resumed = false;
     this.assembler = new StateAssembler();
-    this.retryNotBefore = performance.now() + 8000;
-    const pc = this.newPeer(gen);
-    this.bindChannel(pc.createDataChannel("play", { ordered: true }));
-    try {
-      const offer = await pc.createOffer();
-      if (gen !== this.offerGen || this.closed || pc !== this.pc) return;
-      await pc.setLocalDescription(offer);
-      await this.waitIce(pc);
-      if (gen !== this.offerGen || this.closed || pc !== this.pc) return;
-      const sdp = pc.localDescription?.sdp || offer.sdp || "";
-      if (!sdp) throw new Error("sdp");
-      this.offeredAt = performance.now();
-      this.signal({ kind: "offer", sdp, gen });
-    } catch {
-      if (gen !== this.offerGen || this.closed) return;
-      this.offeredAt = 0;
-      this.retryNotBefore = 0;
-      this.requestRetry();
+    window.clearInterval(this.resendTimer);
+    this.resendTimer = window.setInterval(() => this.flushInputs(), 50);
+    this.reconnectUntil = 0;
+    this.opts.onPause();
+    this.opts.onStatus("Alinhando a partida…");
+    if (!this.started) {
+      if (this.opts.role !== "host") return;
+      this.pingAt = performance.now();
+      this.sendJson({ t: "ping", ms: this.pingAt });
+      window.setTimeout(() => {
+        if (!this.started && !this.closed && this.peerHere) void this.align(3);
+      }, 1000);
       return;
     }
-    this.armRetry();
-  }
-
-  private async onSignal(data: Signal) {
-    const gen = typeof data.gen === "number" ? data.gen : 0;
-    if (data.kind === "ready") {
-      if (this.opts.role !== "host" || this.channel?.readyState === "open" || this.dialing()) return;
-      this.offeredAt = 0;
-      this.retryNotBefore = 0;
-      if (this.offerGen === 0) {
-        await this.startOffer();
-        return;
-      }
-      this.requestRetry();
-      return;
-    }
-    if (data.kind === "offer") {
-      await this.acceptOffer(data.sdp, gen);
-      return;
-    }
-    if (data.kind === "answer") {
-      await this.acceptAnswer(data.sdp, gen);
-      return;
-    }
-    if (data.kind === "ice") await this.applyIce(gen, data.candidate);
-  }
-
-  private async acceptOffer(sdp: string, gen: number) {
-    if (this.opts.role !== "guest" || this.closed || !sdp || gen < this.offerGen) return;
-    if (gen === this.offerGen && (this.channel?.readyState === "open" || this.dialing())) return;
-    this.offerGen = gen;
-    if (!this.synced) {
-      this.started = false;
-      this.resumed = false;
-      this.awaitingSync = false;
-    }
-    this.assembler = new StateAssembler();
-    const pc = this.newPeer(gen);
-    await pc.setRemoteDescription({ type: "offer", sdp });
-    if (gen !== this.offerGen || pc !== this.pc || this.closed) return;
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    await this.waitIce(pc);
-    if (gen !== this.offerGen || pc !== this.pc || this.closed) return;
-    this.offeredAt = performance.now();
-    this.signal({ kind: "answer", sdp: pc.localDescription?.sdp || answer.sdp || "", gen });
-    await this.flushIce(gen);
-    this.armRetry();
-  }
-
-  private async acceptAnswer(sdp: string, gen: number) {
-    if (this.opts.role !== "host" || this.closed || !this.pc || !sdp || gen !== this.offerGen) return;
-    if (this.pc.signalingState !== "have-local-offer") return;
-    await this.pc.setRemoteDescription({ type: "answer", sdp });
-    await this.flushIce(gen);
-  }
-
-  private async applyIce(gen: number, candidate: RTCIceCandidateInit | null) {
-    if (!candidate || (this.offerGen !== 0 && gen < this.offerGen)) return;
-    const pc = this.pc;
-    if (!pc || pc.signalingState === "closed" || gen !== this.offerGen || !pc.remoteDescription) {
-      this.pendingIce.push({ gen, candidate });
-      if (this.pendingIce.length > 64) this.pendingIce.splice(0, this.pendingIce.length - 64);
-      return;
-    }
-    try { await pc.addIceCandidate(candidate); }
-    catch { /* o candidato já entrou no anúncio, ou é de uma tentativa anterior */ }
-  }
-
-  private async flushIce(gen: number) {
-    const mine = this.pendingIce.filter((item) => item.gen === gen);
-    this.pendingIce = this.pendingIce.filter((item) => item.gen > gen);
-    for (const item of mine) {
-      if (!this.pc || this.pc.signalingState === "closed") return;
-      try { await this.pc.addIceCandidate(item.candidate); }
-      catch { /* o candidato já entrou no anúncio */ }
-    }
-  }
-
-  private bindChannel(channel: RTCDataChannel) {
-    const gen = this.offerGen;
-    channel.binaryType = "arraybuffer";
-    channel.onopen = () => {
-      if (gen !== this.offerGen || this.closed) return;
-      this.channel = channel;
-      this.awaitingSync = false;
-      this.resumed = false;
-      this.linkTries = 0;
-      this.guestNudge = 0;
-      window.clearInterval(this.resendTimer);
-      this.resendTimer = window.setInterval(() => this.flushInputs(), 50);
-      window.clearTimeout(this.linkTimer);
-      this.reconnectUntil = 0;
-      this.opts.onPause();
-      if (!this.started) {
-        this.opts.onStatus("Alinhando a partida…");
-        if (this.opts.role === "host") {
-          this.pingAt = performance.now();
-          this.sendJson({ t: "ping", ms: this.pingAt });
-          window.setTimeout(() => {
-            if (!this.started && !this.closed && gen === this.offerGen) void this.align(3);
-          }, 1000);
-        }
-      } else if (this.opts.role === "host") {
-        void this.pushCheckpoint();
-      }
-    };
-    channel.onmessage = (event) => {
-      if (gen !== this.offerGen) return;
-      this.onPlay(event.data);
-    };
-    channel.onclose = () => {
-      if (gen !== this.offerGen || this.closed) return;
-      if (this.channel && this.channel !== channel) return;
-      this.awaitingSync = false;
-      this.resumed = false;
-      this.offeredAt = 0;
-      this.opts.onPause();
-      this.opts.onStatus("Conexão caiu. Tentando de novo…");
-      this.reconnectUntil = performance.now() + 15000;
-      this.retryNotBefore = 0;
-      if (this.opts.role === "host") this.requestRetry();
-      else this.signal({ kind: "ready", gen });
-    };
+    if (this.opts.role === "host") void this.pushCheckpoint();
   }
 
   private fail(reason: string) {
@@ -664,9 +440,7 @@ export class OnlineSession {
   }
 
   private sendSnapshot(frame: number, state: Uint8Array) {
-    const channel = this.channel;
-    const gen = this.offerGen;
-    if (!channel || channel.readyState !== "open") return;
+    if (!this.peerHere || this.ws?.readyState !== WebSocket.OPEN) return;
     if (!state.byteLength || this.delay < 1) {
       this.fail("Não deu para alinhar a partida.");
       return;
@@ -674,10 +448,12 @@ export class OnlineSession {
     this.lastSnapshot = { frame, state, delay: this.delay };
     this.awaitingSync = true;
     const hash = fnv(state);
-    try {
-      for (const chunk of encodeStateChunks(frame, this.delay, hash, state)) channel.send(chunk);
-    } catch {
-      if (this.offerGen === gen && this.channel === channel) this.fail("Não deu para alinhar a partida.");
+    let sent = true;
+    for (const chunk of encodeStateChunks(frame, this.delay, hash, state)) {
+      if (!this.relayBytes(chunk)) sent = false;
+    }
+    if (!sent) {
+      this.fail("Não deu para alinhar a partida.");
       return;
     }
     this.syncSends += 1;
@@ -691,7 +467,7 @@ export class OnlineSession {
       return;
     }
     this.syncTimer = window.setTimeout(() => {
-      if (this.closed || !this.awaitingSync || !this.lastSnapshot || this.offerGen !== gen) return;
+      if (this.closed || !this.awaitingSync || !this.lastSnapshot) return;
       this.sendSnapshot(this.lastSnapshot.frame, this.lastSnapshot.state);
     }, 2000);
   }
@@ -784,7 +560,6 @@ export class OnlineSession {
         this.started = true;
         this.synced = true;
         this.swapBusy = false;
-        this.linkTries = 0;
         this.opts.onResume(this.lastSnapshot);
       }
       return;
@@ -827,18 +602,14 @@ export class OnlineSession {
     this.resumed = true;
     this.synced = true;
     this.delay = done.delay;
-    this.linkTries = 0;
-    this.guestNudge = 0;
-    window.clearTimeout(this.linkTimer);
     this.opts.onResume({ frame: done.frame, state: done.bytes, delay: done.delay });
     this.sendJson({ t: "sync-ok" });
   }
 
   private onPeerLeft() {
-    window.clearTimeout(this.linkTimer);
+    this.peerHere = false;
     this.swapBusy = false;
     this.swapAsked = false;
-    this.offeredAt = 0;
     this.awaitingSync = false;
     this.resumed = false;
     this.opts.onPause();
@@ -847,14 +618,14 @@ export class OnlineSession {
   }
 
   private flushInputs() {
-    if (!this.channel || this.channel.readyState !== "open" || this.outgoing.size === 0) return;
+    if (!this.peerHere || this.ws?.readyState !== WebSocket.OPEN || this.outgoing.size === 0) return;
     const frames = [...this.outgoing.entries()]
       .sort((a, b) => a[0] - b[0])
       .map(([frame, buttons]) => ({ frame, buttons }));
-    this.channel.send(encodeInputs(frames));
+    this.relayBytes(encodeInputs(frames));
   }
 
   private sendJson(message: unknown) {
-    if (this.channel?.readyState === "open") this.channel.send(JSON.stringify(message));
+    this.relay({ data: JSON.stringify(message) });
   }
 }

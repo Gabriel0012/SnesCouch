@@ -89,6 +89,10 @@ test("a sala apresenta os dois jogadores e recusa hash diferente", async () => {
     host.send(JSON.stringify({ t: "signal", data: { kind: "offer", sdp: "v=0" } }));
     assert.match(await echoed, /v=0/);
 
+    const played = waitFor(guest, /"relay".*ping/);
+    host.send(JSON.stringify({ t: "relay", data: "{\"t\":\"ping\"}" }));
+    assert.match(await played, /ping/);
+
     const named = waitFor(guest, /"name":"Lia"/);
     host.send(JSON.stringify({ t: "profile", control: "Fliperama", name: "Lia" }));
     assert.match(await named, /Fliperama/);
@@ -102,10 +106,11 @@ test("a sala apresenta os dois jogadores e recusa hash diferente", async () => {
     assert.match(await hostChat, /manda ver/);
 
     const refused = socket(code, "guest", "0".repeat(40));
-    await new Promise((resolve) => {
-      refused.addEventListener("close", () => resolve());
-      refused.addEventListener("error", () => resolve());
+    const reason = await new Promise((resolve) => {
+      refused.addEventListener("close", (event) => resolve(event.reason || ""));
+      refused.addEventListener("error", () => resolve(""));
     });
+    assert.equal(reason, "Jogo ou hash recusado.");
     assert.notEqual(refused.readyState, WebSocket.OPEN);
     host.close();
     guest.close();

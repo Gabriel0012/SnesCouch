@@ -736,7 +736,7 @@ function askCheckpoint() {
         checkpointWait = null;
         resolve({ frame: 0, state: new Uint8Array(), delay: 0 });
       }
-    }, 1500);
+    }, 4000);
   });
 }
 
@@ -1437,6 +1437,7 @@ async function connect(role: Role, code: string) {
       renderPeople();
       worker?.postMessage({ t: "local" });
       dropHostedRoom();
+      roomState.textContent = idleRoom();
       setBanner(reason);
     },
     onChat: (line) => {
