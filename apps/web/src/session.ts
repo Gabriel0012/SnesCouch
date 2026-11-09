@@ -631,17 +631,27 @@ export class OnlineSession {
     this.opts.onReset({ slot: this.slot, delay });
   }
 
+  private prepareResync() {
+    this.resumed = false;
+    this.syncedFrame = -1;
+    this.awaitingSync = false;
+    this.assembler = new StateAssembler();
+    window.clearTimeout(this.syncTimer);
+  }
+
   private beginSwap() {
     if (this.swapBusy || this.closed || !this.linked()) return;
     this.swapBusy = true;
     this.slot = this.slot === 0 ? 1 : 0;
     this.epoch += 1;
     this.outgoing.clear();
+    this.prepareResync();
     this.sendJson({ t: "swap", slot: this.slot });
+    this.opts.onPause();
     this.opts.onSwap(this.slot);
     const epoch = this.epoch;
     void this.pushCheckpoint().finally(() => {
-      if (this.epoch === epoch) this.swapBusy = false;
+      if (this.closed || this.epoch !== epoch || !this.awaitingSync) this.swapBusy = false;
     });
   }
 
@@ -672,7 +682,14 @@ export class OnlineSession {
     }
     this.syncSends += 1;
     window.clearTimeout(this.syncTimer);
-    if (this.syncSends >= 3) return;
+    if (this.syncSends >= 3) {
+      if (!this.swapBusy) return;
+      this.syncTimer = window.setTimeout(() => {
+        if (this.closed || this.resumed || !this.awaitingSync) return;
+        this.fail("Não deu para trocar os jogadores.");
+      }, 2000);
+      return;
+    }
     this.syncTimer = window.setTimeout(() => {
       if (this.closed || !this.awaitingSync || !this.lastSnapshot || this.offerGen !== gen) return;
       this.sendSnapshot(this.lastSnapshot.frame, this.lastSnapshot.state);
@@ -706,6 +723,8 @@ export class OnlineSession {
         this.swapAsked = false;
         this.slot = message.slot === 0 ? 1 : 0;
         this.outgoing.clear();
+        this.prepareResync();
+        this.opts.onPause();
         this.opts.onSwap(this.slot);
       }
       if (message.t === "reset-ask" && this.started) {
@@ -764,6 +783,7 @@ export class OnlineSession {
         this.resumed = true;
         this.started = true;
         this.synced = true;
+        this.swapBusy = false;
         this.linkTries = 0;
         this.opts.onResume(this.lastSnapshot);
       }
