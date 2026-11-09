@@ -25,7 +25,13 @@
       <button id="banner-close" type="button" aria-label="Fechar">×</button>
     </div>
     <div class="shell">
-      <nav id="pick" aria-label="Jogos"></nav>
+      <div id="shelf">
+        <div class="game-tabs" role="tablist" aria-label="Biblioteca">
+          <button id="tab-online" type="button" role="tab" aria-selected="true" aria-controls="pick">Jogos online</button>
+          <button id="tab-local" type="button" role="tab" aria-selected="false" aria-controls="pick">Jogos local</button>
+        </div>
+        <nav id="pick" aria-label="Jogos"></nav>
+      </div>
       <section id="stage" aria-label="Tela">
         <div id="viewport" class="arrive">
           <label id="drop" class="drop">
@@ -63,13 +69,17 @@
             <button type="button" data-zoom="2">2×</button>
             <button type="button" data-zoom="3">3×</button>
             <button type="button" data-zoom="4">4×</button>
-            <button id="crt-toggle" type="button" aria-pressed="false" aria-label="Filtro CRT">
+            <button id="crt-toggle" type="button" data-crt aria-pressed="false" aria-label="Filtro CRT">
               <img src="/crt.png" alt="" width="28" height="28">
             </button>
             <button id="fullscreen" type="button" aria-label="Tela cheia"></button>
           </div>
+          <div class="cluster" role="group" aria-label="Enquadramento">
+            <button type="button" data-frame="fit" class="on">Fit</button>
+            <button type="button" data-frame="fill">Fill</button>
+          </div>
           <div class="volume">
-            <button id="vol" type="button" aria-pressed="false" aria-label="Silenciar">
+            <button id="vol" class="mute-btn" type="button" data-mute aria-pressed="false" aria-label="Silenciar">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path class="speaker" d="M4 9h3.2L12 5.2v13.6L7.2 15H4z" />
                 <path class="wave" d="M15.2 9.2a4 4 0 0 1 0 5.6" />
@@ -78,8 +88,8 @@
               </svg>
             </button>
             <div class="volume-pop">
-              <input id="vol-slider" type="range" min="0" max="100" value="100" aria-label="Volume do jogo" />
-              <span id="vol-readout">100%</span>
+              <input id="vol-slider" data-volume type="range" min="0" max="100" value="100" aria-label="Volume do jogo" />
+              <span id="vol-readout" data-vol-readout>100%</span>
             </div>
           </div>
           <span class="toolbar-gap"></span>
@@ -112,6 +122,38 @@
             <button type="button" data-bit="b" tabindex="-1">B</button>
           </div>
         </div>
+        <div id="play-menu">
+          <div id="play-menu-panel" hidden>
+            <div class="cluster" role="group" aria-label="Tamanho da tela">
+              <button type="button" data-zoom="fit" class="on">Ajustar</button>
+              <button type="button" data-zoom="2">2×</button>
+              <button type="button" data-zoom="3">3×</button>
+              <button type="button" data-zoom="4">4×</button>
+            </div>
+            <div class="cluster" role="group" aria-label="Enquadramento">
+              <button type="button" data-frame="fit" class="on">Fit</button>
+              <button type="button" data-frame="fill">Fill</button>
+            </div>
+            <div class="play-menu-volume">
+              <button class="mute-btn" type="button" data-mute aria-pressed="false" aria-label="Silenciar">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path class="speaker" d="M4 9h3.2L12 5.2v13.6L7.2 15H4z" />
+                  <path class="wave" d="M15.2 9.2a4 4 0 0 1 0 5.6" />
+                  <path class="wave far" d="M17.6 6.8a7.2 7.2 0 0 1 0 10.4" />
+                  <path class="cross" d="M16 9.5l5 5M21 9.5l-5 5" />
+                </svg>
+              </button>
+              <input data-volume type="range" min="0" max="100" value="100" aria-label="Volume do jogo" />
+              <span data-vol-readout>100%</span>
+            </div>
+            <button type="button" data-crt aria-pressed="false" aria-label="Filtro CRT">
+              <img src="/crt.png" alt="" width="28" height="28">
+            </button>
+          </div>
+          <button id="play-menu-open" type="button" aria-label="Opções" aria-expanded="false" aria-controls="play-menu-panel">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
       </section>
       <aside id="panel" class="arrive">
         <section>
@@ -125,8 +167,8 @@
           <div id="account-out">
             <p class="note">Entre para ver amigos. A ROM e os saves continuam neste navegador.</p>
             <div class="row">
-              <a class="login" href="/api/auth/discord" target="_blank" rel="noopener" aria-label="Entrar com Discord"><img src="/src/assets/discord.png" alt="" /></a>
-              <a class="login" href="/api/auth/google" target="_blank" rel="noopener" aria-label="Entrar com Google"><img src="/src/assets/google.png" alt="" /></a>
+              <a class="login" href="/api/auth/discord" target="_blank" rel="noopener" aria-label="Entrar com Discord"><img src="/src/assets/discord.png" alt="" />discord</a>
+              <a class="login" href="/api/auth/google" target="_blank" rel="noopener" aria-label="Entrar com Google"><img src="/src/assets/google.png" alt="" />google</a>
             </div>
           </div>
           <div id="account-in" hidden>
@@ -180,6 +222,25 @@
       </aside>
     </div>
     <button id="room-backdrop" type="button" hidden aria-label="Fechar sala"></button>
+    <div id="library-edit" hidden>
+      <div class="library-card" role="dialog" aria-modal="true" aria-labelledby="library-title">
+        <div class="saves-bar">
+          <h2 id="library-title">O jogo</h2>
+          <button id="library-close" type="button" aria-label="Fechar">×</button>
+        </div>
+        <label class="nick">Nome
+          <input id="library-name" maxlength="40" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="nick">Capa
+          <input id="library-file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" />
+        </label>
+        <img id="library-preview" alt="" hidden />
+        <div class="row">
+          <button id="library-save" type="button">Salvar</button>
+          <button id="library-cancel" type="button">Cancelar</button>
+        </div>
+      </div>
+    </div>
     <div id="alert" hidden>
       <div class="alert-card" role="dialog" aria-modal="true" aria-labelledby="alert-title">
         <h2 id="alert-title">Alerta</h2>
@@ -198,6 +259,7 @@
         </div>
         <p id="saves-cloud" class="note" hidden>A conta guarda estes saves. A ROM fica neste navegador.</p>
         <div id="saves-grid"></div>
+        <input id="save-import" type="file" accept=".couchsave,application/json" hidden />
       </div>
     </div>
     <div id="manual" hidden>

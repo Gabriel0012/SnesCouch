@@ -2,16 +2,39 @@ import catalog from "../../../packages/catalog/games.json";
 
 export const localGame = {
   id: "local",
-  title: "Outro jogo",
+  title: "Emule seu jogo",
   region: "Local",
   sha1: "",
   bytes: 0,
   players: 2,
 } as const;
 
-export type Game = (typeof catalog.games)[number] | typeof localGame;
+export interface LibraryGame {
+  id: string;
+  title: string;
+  region: "Local";
+  sha1: string;
+  bytes: number;
+  players: 2;
+  coverUrl: string | null;
+}
+
+export type Game = (typeof catalog.games)[number] | typeof localGame | LibraryGame;
 
 export const games: Game[] = catalog.games;
+
+export function localRomId(sha1: string): string {
+  return `local:${sha1}`;
+}
+
+export function isLibraryGame(game: Game): game is LibraryGame {
+  return game.id.startsWith("local:");
+}
+
+export function titleFromFile(name: string): string {
+  const base = name.replace(/^.*[/\\]/, "").replace(/\.[^.]+$/, "").replace(/[_]+/g, " ").trim();
+  return (base.replace(/\s+/g, " ") || "Jogo local").slice(0, 40);
+}
 
 const ROM_MIN = 128 * 1024;
 const ROM_MAX = 8 * 1024 * 1024;

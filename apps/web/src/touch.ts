@@ -110,7 +110,7 @@ export function startTouch(opts: {
   stage.addEventListener("pointerdown", (event) => {
     if (!playing() || !overlay.hidden) return;
     const target = event.target;
-    if (target instanceof Element && target.closest("button, a, input, label, #confirm")) return;
+    if (target instanceof Element && target.closest("button, a, input, label, #confirm, #play-menu")) return;
     event.preventDefault();
     overlay.hidden = false;
   });

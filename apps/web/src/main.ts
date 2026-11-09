@@ -27,6 +27,7 @@ import marioUrl from "./assets/mario.png";
 import luigiUrl from "./assets/luigi.png";
 import inviteYesUrl from "./assets/invite-yes.png";
 import inviteNoUrl from "./assets/invite-no.png";
+import saveIconUrl from "./assets/save-floppy.png";
 import { Speaker } from "./audio.ts";
 import { kindFromLabel, padIcon } from "./icons.ts";
 import { startInstall } from "./install.ts";
@@ -34,15 +35,18 @@ import { KEYBOARD_GUIDE, connectedPads, padStatus, readPads, readSupers, setTouc
 import { paintManual } from "./manual.ts";
 import { startTouch } from "./touch.ts";
 import { controlGuide, keyboardScheme, padLabel } from "./pads.ts";
-import { games, localGame, looksLikeSnesRom, matchRom, sha1Of, type Game } from "./rom.ts";
+import { games, isLibraryGame, localGame, localRomId, looksLikeSnesRom, matchRom, sha1Of, titleFromFile, type Game, type LibraryGame } from "./rom.ts";
+import { decodeSaveFile, encodeSaveFile } from "./save-file.ts";
 import { OnlineSession, type ChatLine, type Role, type Seat } from "./session.ts";
 import { FIGHTERS, LEFT, RIGHT, SELECT, fighterLabel, superSteps, type Fighter } from "./supers.ts";
 import { bindScreen, setCrt, whenCrtDrops } from "./crt.ts";
 import { conceal, reveal, shown } from "./motion.ts";
-import { forgetRom, lastGame, loadRom, loadState, playerName, saveList, saveRom, saveSlots, saveState, setPlayerName, storedGames } from "./store.ts";
+import { forgetRom, forgetSlot, lastGame, listLibrary, loadRom, loadState, playerName, renameRom, saveList, saveRom, saveSlots, saveState, setPlayerName, setRomCover, storedGames } from "./store.ts";
 import { startTour } from "./tour.ts";
 
 const pick = document.querySelector<HTMLElement>("#pick")!;
+const tabOnline = document.querySelector<HTMLButtonElement>("#tab-online")!;
+const tabLocal = document.querySelector<HTMLButtonElement>("#tab-local")!;
 const stage = document.querySelector<HTMLElement>("#stage")!;
 const panel = document.querySelector<HTMLElement>("#panel")!;
 const roomOpen = document.querySelector<HTMLButtonElement>("#room-open")!;
@@ -93,20 +97,34 @@ const confirmYes = document.querySelector<HTMLButtonElement>("#confirm-yes")!;
 const confirmNo = document.querySelector<HTMLButtonElement>("#confirm-no")!;
 const picture = document.querySelector<HTMLElement>("#picture")!;
 const viewport = document.querySelector<HTMLElement>("#viewport")!;
+const savesOpen = document.querySelector<HTMLButtonElement>("#saves-open")!;
 const savesModal = document.querySelector<HTMLElement>("#saves-modal")!;
 const savesGrid = document.querySelector<HTMLElement>("#saves-grid")!;
+const saveImport = document.querySelector<HTMLInputElement>("#save-import")!;
+const savesMark = document.createElement("img");
+savesMark.src = saveIconUrl;
+savesMark.alt = "";
+savesMark.draggable = false;
+if (!savesOpen.querySelector("img")) savesOpen.prepend(savesMark);
+const libraryEdit = document.querySelector<HTMLElement>("#library-edit")!;
+const libraryName = document.querySelector<HTMLInputElement>("#library-name")!;
+const libraryFile = document.querySelector<HTMLInputElement>("#library-file")!;
+const libraryPreview = document.querySelector<HTMLImageElement>("#library-preview")!;
 const copyButton = document.querySelector<HTMLButtonElement>("#copy")!;
 const createButton = document.querySelector<HTMLButtonElement>("#create")!;
 const joinButton = document.querySelector<HTMLButtonElement>("#join")!;
-const volButton = document.querySelector<HTMLButtonElement>("#vol")!;
-const crtButton = document.querySelector<HTMLButtonElement>("#crt-toggle")!;
-const volSlider = document.querySelector<HTMLInputElement>("#vol-slider")!;
-const volReadout = document.querySelector<HTMLElement>("#vol-readout")!;
-
 let screen = document.querySelector<HTMLCanvasElement>("#screen")!;
 let transferred = false;
 let zoom: "fit" | "2" | "3" | "4" = "fit";
+const FRAME_KEY = "snes-couch-frame";
 const CRT_KEY = "snes-couch-crt";
+
+function storedFrame(): "fit" | "fill" {
+  try { return localStorage.getItem(FRAME_KEY) === "fill" ? "fill" : "fit"; }
+  catch { return "fit"; }
+}
+
+let frame: "fit" | "fill" = storedFrame();
 
 function storedCrt(): boolean {
   try { return localStorage.getItem(CRT_KEY) === "1"; }
@@ -115,7 +133,12 @@ function storedCrt(): boolean {
 
 let crtOn = storedCrt();
 
-const shelf: Game[] = [...games, localGame];
+type ShelfTab = "online" | "local";
+
+let shelfTab: ShelfTab = "online";
+let library: LibraryGame[] = [];
+const coverUrls = new Map<string, string>();
+let paintedShelf = "";
 
 let selected: Game = games[0];
 let loadedGame: Game | null = null;
@@ -135,8 +158,10 @@ const localChecks = new Map<number, number>();
 const remoteChecks = new Map<number, number>();
 let checkpointWait: ((snapshot: { frame: number; state: Uint8Array; delay: number }) => void) | null = null;
 let saveWait: ((saved: { state: Uint8Array; shot: Uint8Array | null }) => void) | null = null;
-type AlertMode = "forget" | "reset-local" | "reset-ask" | "reset-wait" | "reset-in";
+type AlertMode = "forget" | "reset-local" | "reset-ask" | "reset-wait" | "reset-in" | "drop-slot";
 let alertMode: AlertMode | null = null;
+let dropTarget: { gameId: string; slot: number } | null = null;
+let importSlot: number | null = null;
 let inviteTimer = 0;
 let inviteTick = 0;
 let liveSocket: WebSocket | null = null;
@@ -206,7 +231,76 @@ function coverOf(id: string) {
 }
 
 function plainGame(game: Game = selected): boolean {
-  return game.id === localGame.id;
+  return game.id === localGame.id || isLibraryGame(game);
+}
+
+function visibleShelf(): Game[] {
+  return shelfTab === "online" ? [...games] : [localGame, ...library];
+}
+
+function findGame(id: string | null): Game | undefined {
+  if (!id) return;
+  if (id === localGame.id) return localGame;
+  return games.find((game) => game.id === id) ?? library.find((game) => game.id === id);
+}
+
+function paintTabs() {
+  const online = shelfTab === "online";
+  tabOnline.setAttribute("aria-selected", online ? "true" : "false");
+  tabLocal.setAttribute("aria-selected", online ? "false" : "true");
+  tabOnline.classList.toggle("on", online);
+  tabLocal.classList.toggle("on", !online);
+}
+
+function showTab(tab: ShelfTab) {
+  if (shelfTab === tab) return;
+  shelfTab = tab;
+  paintTabs();
+  renderGames();
+}
+
+function coverBlob(bytes: Uint8Array, type: string): string {
+  const copy = new Uint8Array(bytes);
+  return URL.createObjectURL(new Blob([copy], { type }));
+}
+
+function applyLibrary(rows: Awaited<ReturnType<typeof listLibrary>>) {
+  const next = new Map<string, string>();
+  library = rows.map((row) => {
+    let coverUrl: string | null = null;
+    if (row.cover && row.coverType) {
+      coverUrl = coverBlob(row.cover, row.coverType);
+      next.set(row.id, coverUrl);
+    }
+    return {
+      id: row.id,
+      title: row.title,
+      region: "Local" as const,
+      sha1: row.sha1,
+      bytes: 0,
+      players: 2 as const,
+      coverUrl,
+    };
+  });
+  for (const [id, url] of coverUrls) {
+    if (next.get(id) !== url) URL.revokeObjectURL(url);
+  }
+  coverUrls.clear();
+  for (const [id, url] of next) coverUrls.set(id, url);
+  const fresh = library.find((game) => game.id === selected.id);
+  if (fresh) selected = fresh;
+  if (loadedGame) {
+    const loaded = library.find((game) => game.id === loadedGame?.id);
+    if (loaded) {
+      loadedGame = loaded;
+      if (!session) roomState.textContent = playingLine(loaded);
+    }
+  }
+}
+
+async function refreshLibrary() {
+  applyLibrary(await listLibrary());
+  renderGames();
 }
 
 function idleRoom(): string {
@@ -216,23 +310,18 @@ function idleRoom(): string {
 }
 
 function playingLine(game: Game): string {
-  return plainGame(game)
-    ? "Outro jogo nesta máquina. Os controles ligados jogam aqui."
-    : `${game.title} nesta máquina. Os dois teclados jogam aqui.`;
+  if (game.id === localGame.id) return "Outro jogo nesta máquina. Os controles ligados jogam aqui.";
+  if (plainGame(game)) return `${game.title} nesta máquina. Os controles ligados jogam aqui.`;
+  return `${game.title} nesta máquina. Os dois teclados jogam aqui.`;
 }
 
 function gameMeta(game: Game): string {
-  if (plainGame(game)) return ready.has(game.id) ? "ROM neste navegador" : "Emule seu jogo local";
+  if (game.id === localGame.id) return "Solte uma ROM de Super Nintendo";
+  if (plainGame(game)) return "Só nesta máquina";
   return `${game.region} · ${ready.has(game.id) ? "ROM neste navegador" : "ROM ainda não gravada"}`;
 }
 
-function gameFace(game: Game): HTMLElement {
-  if (!plainGame(game)) {
-    const image = document.createElement("img");
-    image.src = coverOf(game.id);
-    image.alt = "";
-    return image;
-  }
+function cartridgeFace(): HTMLElement {
   const face = document.createElement("span");
   face.className = "cartridge";
   const icon = document.createElement("img");
@@ -240,6 +329,22 @@ function gameFace(game: Game): HTMLElement {
   icon.alt = "";
   face.append(icon);
   return face;
+}
+
+function gameFace(game: Game): HTMLElement {
+  if (isLibraryGame(game) && game.coverUrl) {
+    const image = document.createElement("img");
+    image.src = game.coverUrl;
+    image.alt = "";
+    return image;
+  }
+  if (!plainGame(game)) {
+    const image = document.createElement("img");
+    image.src = coverOf(game.id);
+    image.alt = "";
+    return image;
+  }
+  return cartridgeFace();
 }
 
 let gamesIntro = true;
@@ -253,9 +358,17 @@ function clipTitles() {
 new ResizeObserver(() => clipTitles()).observe(pick);
 void document.fonts.ready.then(() => clipTitles());
 
+function faceKey(game: Game): string {
+  if (isLibraryGame(game)) return game.coverUrl ?? "";
+  if (plainGame(game)) return "";
+  return coverOf(game.id);
+}
+
 function renderGames() {
-  if (pick.childElementCount === shelf.length) {
-    const buttons = pick.querySelectorAll<HTMLButtonElement>(".game");
+  const shelf = visibleShelf();
+  const key = shelf.map((game) => `${game.id}\t${game.title}\t${faceKey(game)}`).join("\n");
+  const buttons = pick.querySelectorAll<HTMLButtonElement>(":scope > .game, :scope > .game-item > .game");
+  if (key === paintedShelf && buttons.length === shelf.length) {
     shelf.forEach((game, index) => {
       const button = buttons[index];
       if (!button) return;
@@ -268,6 +381,7 @@ function renderGames() {
   }
   const intro = gamesIntro;
   gamesIntro = false;
+  paintedShelf = key;
   pick.replaceChildren();
   shelf.forEach((game, index) => {
     const button = document.createElement("button");
@@ -295,7 +409,20 @@ function renderGames() {
       button.scrollIntoView({ inline: "center", block: "nearest" });
       void openStored(game);
     });
-    pick.append(button);
+    if (!isLibraryGame(game)) {
+      pick.append(button);
+      return;
+    }
+    const item = document.createElement("div");
+    item.className = "game-item";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "game-edit";
+    edit.textContent = "Editar";
+    edit.setAttribute("aria-label", `Editar ${game.title}`);
+    edit.addEventListener("click", () => openLibraryEdit(game));
+    item.append(button, edit);
+    pick.append(item);
   });
   clipTitles();
 }
@@ -306,7 +433,7 @@ function syncPlainRoom() {
   joinButton.disabled = plain;
   codeInput.disabled = plain;
   copyButton.disabled = plain;
-  if (!plain || session || loadedGame?.id === localGame.id) return;
+  if (!plain || session || (loadedGame && plainGame(loadedGame))) return;
   roomState.textContent = idleRoom();
 }
 
@@ -359,24 +486,28 @@ function stopPlay(next: "drop" | "welcome" = "drop") {
 }
 
 async function openStored(game: Game) {
+  if (game.id === localGame.id) {
+    if (loadedGame) stopPlay();
+    roomState.textContent = "Emule seu jogo. Solte uma ROM de Super Nintendo. Ela fica neste navegador.";
+    return;
+  }
   if (loadedGame?.id === game.id) return;
   const record = await loadRom(game.id);
   if (!record) {
     stopPlay();
-    roomState.textContent = plainGame(game)
-      ? "Outro jogo. Solte uma ROM de Super Nintendo. Ela fica neste navegador."
-      : `${game.title}. Solte a ROM uma vez. Ela fica neste navegador.`;
+    roomState.textContent = `${game.title}. Solte a ROM uma vez. Ela fica neste navegador.`;
     return;
   }
-  if (plainGame(game)) {
+  if (isLibraryGame(game)) {
     if (!looksLikeSnesRom(record.bytes.length)) {
       await forgetRom(game.id);
       ready.delete(game.id);
-      renderGames();
+      if (selected.id === game.id) selected = localGame;
+      await refreshLibrary();
       setBanner("A ROM gravada não parece de Super Nintendo. Solta o arquivo de novo.");
       return;
     }
-    await boot(localGame, record.bytes);
+    await boot(game, record.bytes);
     return;
   }
   const matched = await matchRom(record.bytes);
@@ -388,6 +519,43 @@ async function openStored(game: Game) {
     return;
   }
   await boot(matched.game, matched.rom);
+}
+
+async function keepCatalog(game: Game, rom: Uint8Array) {
+  try {
+    await saveRom(game.id, game.sha1, rom);
+    ready.add(game.id);
+  } catch {
+    setBanner("A ROM abriu, mas não ficou gravada neste navegador.");
+  }
+  shelfTab = "online";
+  paintTabs();
+  await boot(game, rom);
+}
+
+async function keepLibrary(bytes: Uint8Array, sha1: string, fileName: string) {
+  const id = localRomId(sha1);
+  const existing = library.find((game) => game.id === id);
+  const title = existing?.title ?? titleFromFile(fileName);
+  try {
+    await saveRom(id, sha1, bytes, existing ? undefined : title);
+    ready.add(id);
+    await refreshLibrary();
+  } catch {
+    setBanner("A ROM abriu, mas não ficou gravada neste navegador.");
+  }
+  const game = library.find((entry) => entry.id === id) ?? {
+    id,
+    title,
+    region: "Local" as const,
+    sha1,
+    bytes: 0,
+    players: 2 as const,
+    coverUrl: null,
+  };
+  shelfTab = "local";
+  paintTabs();
+  await boot(game, bytes);
 }
 
 async function openFile(file: File) {
@@ -402,14 +570,13 @@ async function openFile(file: File) {
       setBanner("Esse arquivo não parece uma ROM de Super Nintendo. Nada foi enviado.");
       return;
     }
-    try {
-      await saveRom(localGame.id, await sha1Of(bytes), bytes);
-      ready.add(localGame.id);
-      renderGames();
-    } catch {
-      setBanner("A ROM abriu, mas não ficou gravada neste navegador.");
+    const matched = await matchRom(bytes);
+    if (matched) {
+      await keepCatalog(matched.game, matched.rom);
+      setBanner(`${matched.game.title} entrou nos jogos online.`);
+      return;
     }
-    await boot(localGame, bytes);
+    await keepLibrary(bytes, await sha1Of(bytes), file.name);
     return;
   }
   const matched = await matchRom(bytes);
@@ -419,14 +586,7 @@ async function openFile(file: File) {
       : "Esse arquivo não é a versão USA esperada. Nada foi enviado.");
     return;
   }
-  try {
-    await saveRom(matched.game.id, matched.game.sha1, matched.rom);
-    ready.add(matched.game.id);
-    renderGames();
-  } catch {
-    setBanner("A ROM abriu, mas não ficou gravada neste navegador.");
-  }
-  await boot(matched.game, matched.rom);
+  await keepCatalog(matched.game, matched.rom);
 }
 
 async function boot(game: Game, rom: Uint8Array) {
@@ -548,7 +708,7 @@ function onWorker(message: {
   }
   if (message.t === "restored") setBanner("Save carregado.");
   if (message.t === "error") {
-    if (message.message === "O núcleo não aceitou essa ROM." && loadedGame?.id === localGame.id) {
+    if (message.message === "O núcleo não aceitou essa ROM." && loadedGame && isLibraryGame(loadedGame)) {
       void dropRejectedLocal();
       return;
     }
@@ -852,14 +1012,43 @@ function when(ms: number) {
 
 const shotUrls: string[] = [];
 
-function plusIcon(): SVGSVGElement {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("aria-hidden", "true");
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", "M12 5v14M5 12h14");
-  svg.append(path);
-  return svg;
+function slotButton(className: string, label: string, kind: "save" | "down" | "up") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  if (kind === "save") {
+    const image = document.createElement("img");
+    image.src = saveIconUrl;
+    image.alt = "";
+    image.draggable = false;
+    image.className = "pixel";
+    button.append(image);
+  } else {
+    const mark = document.createElement("i");
+    mark.className = kind;
+    mark.setAttribute("aria-hidden", "true");
+    button.append(mark);
+  }
+  const text = document.createElement("span");
+  text.textContent = label;
+  button.append(text);
+  return button;
+}
+
+function saveDownloadName(title: string, slot: number) {
+  const clean = title.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim().slice(0, 40);
+  return `${clean || "jogo"}-save-${slot}.couchsave`;
+}
+
+function downloadBlob(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
 function closeSaves(immediate = false) {
@@ -877,19 +1066,29 @@ function paintSlots(game: Game, slots: Awaited<ReturnType<typeof saveList>>) {
   savesGrid.replaceChildren();
   for (const slot of saveSlots) {
     const record = bySlot.get(slot);
-    if (!record) {
-      const empty = document.createElement("button");
-      empty.type = "button";
-      empty.className = "slot-empty";
-      const caption = document.createElement("span");
-      caption.textContent = "Adicionar slot";
-      empty.append(plusIcon(), caption);
-      empty.addEventListener("click", () => void writeSlot(game, slot));
-      savesGrid.append(empty);
-      continue;
-    }
     const card = document.createElement("article");
     card.className = "slot-card";
+    if (!record) {
+      const empty = document.createElement("div");
+      empty.className = "slot-empty";
+      const caption = document.createElement("span");
+      caption.textContent = "Vazio";
+      empty.append(caption);
+      const save = slotButton("slot-save", "Salvar", "save");
+      save.setAttribute("aria-label", `Salvar no slot ${slot}`);
+      save.addEventListener("click", () => void writeSlot(game, slot));
+      const bring = slotButton("slot-import", "Importar", "up");
+      bring.setAttribute("aria-label", `Importar um save no slot ${slot}`);
+      bring.addEventListener("click", () => pickImport(slot));
+      const actions = document.createElement("div");
+      actions.className = "slot-actions";
+      actions.append(save, bring);
+      card.append(empty, actions);
+      savesGrid.append(card);
+      continue;
+    }
+    const frame = document.createElement("div");
+    frame.className = "slot-frame";
     const shot = document.createElement("button");
     shot.type = "button";
     shot.className = "slot-shot";
@@ -908,6 +1107,15 @@ function paintSlots(game: Game, slots: Awaited<ReturnType<typeof saveList>>) {
       shot.append(blank);
     }
     shot.addEventListener("click", () => void readSlot(game, slot, record.savedAt));
+    const drop = document.createElement("button");
+    drop.type = "button";
+    drop.className = "slot-drop";
+    drop.setAttribute("aria-label", `Apagar o save ${slot}`);
+    const bin = document.createElement("i");
+    bin.setAttribute("aria-hidden", "true");
+    drop.append(bin);
+    drop.addEventListener("click", () => askDropSlot(game, slot));
+    frame.append(shot, drop);
     const meta = document.createElement("div");
     meta.className = "slot-meta";
     const dot = document.createElement("i");
@@ -918,13 +1126,17 @@ function paintSlots(game: Game, slots: Awaited<ReturnType<typeof saveList>>) {
     place.textContent = online ? "Sala" : "Local";
     const time = document.createElement("span");
     time.textContent = when(record.savedAt);
-    const again = document.createElement("button");
-    again.type = "button";
-    again.className = "slot-again";
-    again.textContent = "Gravar";
-    again.addEventListener("click", () => void writeSlot(game, slot));
-    meta.append(dot, place, time, again);
-    card.append(shot, meta);
+    meta.append(dot, place, time);
+    const save = slotButton("slot-save", "Salvar", "save");
+    save.setAttribute("aria-label", `Salvar no slot ${slot}`);
+    save.addEventListener("click", () => void writeSlot(game, slot));
+    const down = slotButton("slot-down", "Baixar", "down");
+    down.setAttribute("aria-label", `Baixar o save ${slot}`);
+    down.addEventListener("click", () => void downloadSlot(game, slot, record.savedAt, record.shot));
+    const actions = document.createElement("div");
+    actions.className = "slot-actions";
+    actions.append(save, down);
+    card.append(frame, meta, actions);
     savesGrid.append(card);
   }
 }
@@ -1021,6 +1233,64 @@ async function writeSlot(game: Game, slot: number) {
   }
 }
 
+async function downloadSlot(game: Game, slot: number, savedAt: number, shot: Uint8Array | null) {
+  const state = await loadState(game.id, slot);
+  if (!state) {
+    setBanner("Esse save não está mais neste navegador.");
+    await renderSaves();
+    return;
+  }
+  const text = encodeSaveFile({ sha1: game.sha1, title: game.title, savedAt, state, shot });
+  downloadBlob(new Blob([text], { type: "application/json" }), saveDownloadName(game.title, slot));
+}
+
+function pickImport(slot: number) {
+  importSlot = slot;
+  saveImport.value = "";
+  saveImport.click();
+}
+
+async function importSave(game: Game, slot: number, file: File) {
+  if (file.size > 12 * 1024 * 1024) {
+    setBanner("Esse arquivo é grande demais para ser um save.");
+    return;
+  }
+  let parsed: ReturnType<typeof decodeSaveFile>;
+  try {
+    parsed = decodeSaveFile(await file.text());
+  } catch {
+    setBanner("Não deu para ler esse arquivo.");
+    return;
+  }
+  if (!parsed) {
+    setBanner("Esse arquivo não é um save deste emulador.");
+    return;
+  }
+  if (!game.sha1 || parsed.sha1 !== game.sha1) {
+    setBanner(parsed.title ? `Esse save é de ${parsed.title}.` : "Esse save é de outra ROM.");
+    return;
+  }
+  const taken = (await saveList(game.id)).some((item) => item.slot === slot);
+  if (taken) {
+    setBanner(`O slot ${slot} já tem um save.`);
+    await renderSaves();
+    return;
+  }
+  try {
+    await saveState(game.id, slot, parsed.state, parsed.shot, "local", parsed.savedAt);
+    setBanner(`Save ${slot} importado.`);
+    await renderSaves();
+  } catch (error) {
+    setBanner(error instanceof Error ? error.message : "Não deu para importar o save.");
+  }
+}
+
+function askDropSlot(game: Game, slot: number) {
+  if (alertMode) return;
+  dropTarget = { gameId: game.id, slot };
+  openAlert("drop-slot");
+}
+
 function showConfirm(text: string, mode: "both" | "cancel") {
   confirmText.textContent = text;
   confirmYes.hidden = mode === "cancel";
@@ -1052,10 +1322,14 @@ async function readSlot(game: Game, slot: number, savedAt: number) {
 }
 
 async function dropRejectedLocal() {
-  await forgetRom(localGame.id);
-  ready.delete(localGame.id);
-  if (loadedGame?.id === localGame.id) stopPlay();
-  renderGames();
+  const game = loadedGame;
+  if (!game || !isLibraryGame(game)) return;
+  await forgetRom(game.id);
+  ready.delete(game.id);
+  if (loadedGame?.id === game.id) stopPlay();
+  if (editingId === game.id) closeLibraryEdit();
+  if (selected.id === game.id) selected = localGame;
+  await refreshLibrary();
   updateDrop();
   setBanner("O núcleo não aceitou essa ROM.");
 }
@@ -1238,15 +1512,23 @@ if (volume === 0) volume = 50;
 
 function paintVolume() {
   const audible = muted ? 0 : volume;
+  const quiet = muted || volume === 0;
+  const level = quiet ? "mute" : volume < 40 ? "low" : "high";
   speaker.setVolume(audible / 100);
-  volSlider.value = String(volume);
-  volReadout.textContent = muted || volume === 0 ? "Mudo" : `${volume}%`;
-  volButton.dataset.level = muted || volume === 0 ? "mute" : volume < 40 ? "low" : "high";
-  volButton.setAttribute("aria-pressed", muted || volume === 0 ? "true" : "false");
-  volButton.setAttribute("aria-label", muted || volume === 0 ? "Ativar som" : "Silenciar");
+  for (const slider of document.querySelectorAll<HTMLInputElement>("[data-volume]")) {
+    slider.value = String(volume);
+  }
+  for (const readout of document.querySelectorAll<HTMLElement>("[data-vol-readout]")) {
+    readout.textContent = quiet ? "Mudo" : `${volume}%`;
+  }
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mute]")) {
+    button.dataset.level = level;
+    button.setAttribute("aria-pressed", quiet ? "true" : "false");
+    button.setAttribute("aria-label", quiet ? "Ativar som" : "Silenciar");
+  }
   try {
     localStorage.setItem(VOLUME_KEY, String(volume));
-    localStorage.setItem(MUTE_KEY, muted || volume === 0 ? "1" : "0");
+    localStorage.setItem(MUTE_KEY, quiet ? "1" : "0");
   } catch { /* o nível vale só nesta visita */ }
 }
 
@@ -1257,16 +1539,28 @@ function toggleMute() {
 }
 
 function applyZoom() {
+  const stretch = frame === "fill";
   screen.classList.remove("fit", "z2", "z3", "z4");
-  screen.classList.add(zoom === "fit" ? "fit" : `z${zoom}`);
+  screen.classList.add(!stretch && zoom !== "fit" ? `z${zoom}` : "fit");
+  picture.classList.toggle("fill", stretch);
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-zoom]")) {
     button.classList.toggle("on", button.dataset.zoom === zoom);
   }
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-frame]")) {
+    button.classList.toggle("on", button.dataset.frame === frame);
+  }
+}
+
+function rememberFrame() {
+  try { localStorage.setItem(FRAME_KEY, frame); }
+  catch { /* a escolha vale só nesta visita */ }
 }
 
 function paintCrt() {
-  crtButton.classList.toggle("on", crtOn);
-  crtButton.setAttribute("aria-pressed", crtOn ? "true" : "false");
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-crt]")) {
+    button.classList.toggle("on", crtOn);
+    button.setAttribute("aria-pressed", crtOn ? "true" : "false");
+  }
 }
 
 function rememberCrt() {
@@ -2058,7 +2352,14 @@ document.querySelector("#manual-close")!.addEventListener("click", () => closeMa
 manual.addEventListener("click", (event) => {
   if (event.target === manual) closeManual();
 });
-document.querySelector("#saves-open")!.addEventListener("click", () => void openSaves());
+savesOpen.addEventListener("click", () => void openSaves());
+saveImport.addEventListener("change", () => {
+  const file = saveImport.files?.[0];
+  const slot = importSlot;
+  importSlot = null;
+  if (!file || slot === null || !loadedGame) return;
+  void importSave(loadedGame, slot, file);
+});
 document.querySelector("#saves-close")!.addEventListener("click", () => closeSaves());
 savesModal.addEventListener("click", (event) => {
   if (event.target === savesModal) closeSaves();
@@ -2078,6 +2379,7 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   if (event.code === "Escape" && !alertBox.hidden) dismissAlert();
+  else if (event.code === "Escape" && !libraryEdit.hidden) closeLibraryEdit();
   else if (event.code === "Escape" && !savesModal.hidden) closeSaves();
   else if (event.code === "Escape" && !manual.hidden) closeManual();
   else if (event.code === "Escape" && !playChat.hidden) {
@@ -2143,7 +2445,7 @@ window.addEventListener("keydown", (event) => {
     const tag = target.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON" || tag === "A" || tag === "SUMMARY" || target.isContentEditable) return;
   }
-  if (!manual.hidden || !alertBox.hidden || !savesModal.hidden) return;
+  if (!manual.hidden || !alertBox.hidden || !savesModal.hidden || !libraryEdit.hidden) return;
   const tour = document.querySelector("#tour");
   if (tour instanceof HTMLElement && !tour.hidden) return;
   if (event.code === "KeyC") {
@@ -2182,13 +2484,26 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-zoom]")
   });
 }
 
-crtButton.addEventListener("click", () => {
-  crtOn = !crtOn;
-  if (crtOn && !setCrt(true)) crtOn = false;
-  if (!crtOn) setCrt(false);
-  paintCrt();
-  rememberCrt();
-});
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-frame]")) {
+  button.addEventListener("click", () => {
+    const next = button.dataset.frame;
+    if (next !== "fit" && next !== "fill") return;
+    if (next === frame) return;
+    frame = next;
+    applyZoom();
+    rememberFrame();
+  });
+}
+
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-crt]")) {
+  button.addEventListener("click", () => {
+    crtOn = !crtOn;
+    if (crtOn && !setCrt(true)) crtOn = false;
+    if (!crtOn) setCrt(false);
+    paintCrt();
+    rememberCrt();
+  });
+}
 
 document.querySelector("#banner-close")!.addEventListener("click", () => setBanner(""));
 
@@ -2201,12 +2516,16 @@ document.querySelector("#reset")!.addEventListener("click", () => {
   openAlert(session?.linked() ? "reset-ask" : "reset-local");
 });
 
-volButton.addEventListener("click", () => toggleMute());
-volSlider.addEventListener("input", () => {
-  volume = Number(volSlider.value);
-  muted = volume === 0;
-  paintVolume();
-});
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mute]")) {
+  button.addEventListener("click", () => toggleMute());
+}
+for (const slider of document.querySelectorAll<HTMLInputElement>("[data-volume]")) {
+  slider.addEventListener("input", () => {
+    volume = Number(slider.value);
+    muted = volume === 0;
+    paintVolume();
+  });
+}
 
 function coarsePointer(): boolean {
   return window.matchMedia("(pointer: coarse)").matches;
@@ -2243,9 +2562,33 @@ document.querySelector("#fullscreen")!.addEventListener("click", () => {
   else void enterFullscreen();
 });
 
+const playMenu = document.querySelector<HTMLElement>("#play-menu")!;
+const playMenuPanel = document.querySelector<HTMLElement>("#play-menu-panel")!;
+const playMenuOpen = document.querySelector<HTMLButtonElement>("#play-menu-open")!;
+
+function setPlayMenu(open: boolean) {
+  playMenuPanel.hidden = !open;
+  playMenuOpen.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+playMenuOpen.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setPlayMenu(playMenuPanel.hidden);
+});
+
+document.addEventListener("pointerdown", (event) => {
+  if (playMenuPanel.hidden) return;
+  const target = event.target;
+  if (target instanceof Node && playMenu.contains(target)) return;
+  setPlayMenu(false);
+});
+
 document.addEventListener("fullscreenchange", () => {
   stage.classList.toggle("play-full", document.fullscreenElement === stage && coarsePointer());
-  if (!document.fullscreenElement) unlockOrientation();
+  if (!document.fullscreenElement) {
+    unlockOrientation();
+    setPlayMenu(false);
+  }
 });
 
 startInstall(document.querySelector<HTMLButtonElement>("#install")!);
@@ -2263,6 +2606,7 @@ const alertNo = document.querySelector<HTMLButtonElement>("#alert-no")!;
 
 function openAlert(mode: AlertMode, name = "") {
   alertMode = mode;
+  if (mode !== "drop-slot") dropTarget = null;
   alertYes.hidden = mode === "reset-wait";
   if (mode === "forget") {
     alertText.textContent = `A ROM e os saves de ${selected.title} saem deste navegador. A partida para. Não tem como desfazer.`;
@@ -2275,6 +2619,9 @@ function openAlert(mode: AlertMode, name = "") {
     alertYes.textContent = "Reiniciar";
   } else if (mode === "reset-wait") {
     alertText.textContent = "Esperando o outro jogador confirmar o reinício.";
+  } else if (mode === "drop-slot") {
+    alertText.textContent = `Apagar o save ${dropTarget?.slot ?? ""}? Ele sai deste navegador. Não tem como desfazer.`;
+    alertYes.textContent = "Apagar";
   } else {
     alertText.textContent = `${name} quer reiniciar o jogo. Confirme para os dois voltarem ao começo juntos.`;
     alertYes.textContent = "Confirmar";
@@ -2285,6 +2632,7 @@ function openAlert(mode: AlertMode, name = "") {
 
 function closeAlert() {
   alertMode = null;
+  dropTarget = null;
   alertYes.hidden = false;
   conceal(alertBox, "modal");
 }
@@ -2296,6 +2644,99 @@ function dismissAlert() {
   if (mode === "reset-wait" || mode === "reset-in") setBanner("Reinício cancelado.");
   closeAlert();
 }
+
+const COVER_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const COVER_MAX = Math.floor(1.5 * 1024 * 1024);
+
+let editingId: string | null = null;
+let pendingCover: { bytes: Uint8Array; type: string } | null = null;
+let draftCoverUrl: string | null = null;
+
+function clearDraftCover() {
+  if (!draftCoverUrl) return;
+  URL.revokeObjectURL(draftCoverUrl);
+  draftCoverUrl = null;
+}
+
+function showCoverPreview(url: string | null) {
+  if (!url) {
+    libraryPreview.removeAttribute("src");
+    libraryPreview.hidden = true;
+    return;
+  }
+  libraryPreview.src = url;
+  libraryPreview.hidden = false;
+}
+
+function openLibraryEdit(game: LibraryGame) {
+  editingId = game.id;
+  pendingCover = null;
+  clearDraftCover();
+  libraryName.value = game.title;
+  libraryFile.value = "";
+  showCoverPreview(game.coverUrl);
+  reveal(libraryEdit, "modal");
+  libraryName.focus();
+}
+
+function closeLibraryEdit() {
+  editingId = null;
+  pendingCover = null;
+  clearDraftCover();
+  conceal(libraryEdit, "modal");
+}
+
+async function saveLibraryEdit() {
+  const id = editingId;
+  if (!id) return;
+  const title = libraryName.value.replace(/\s+/g, " ").trim().slice(0, 40);
+  if (!title) {
+    setBanner("O jogo precisa de um nome.");
+    return;
+  }
+  try {
+    await renameRom(id, title);
+    if (pendingCover) await setRomCover(id, pendingCover.bytes, pendingCover.type);
+  } catch {
+    setBanner("Não deu para guardar o nome ou a capa.");
+    return;
+  }
+  closeLibraryEdit();
+  await refreshLibrary();
+  setBanner("Jogo atualizado.");
+}
+
+tabOnline.addEventListener("click", () => showTab("online"));
+tabLocal.addEventListener("click", () => showTab("local"));
+
+libraryFile.addEventListener("change", () => {
+  const file = libraryFile.files?.[0];
+  if (!file) return;
+  if (!COVER_TYPES.has(file.type) || file.size > COVER_MAX) {
+    libraryFile.value = "";
+    setBanner("A capa precisa ser uma imagem de até 1,5 MB.");
+    return;
+  }
+  void file.arrayBuffer().then((buffer) => {
+    if (editingId === null) return;
+    pendingCover = { bytes: new Uint8Array(buffer), type: file.type };
+    clearDraftCover();
+    draftCoverUrl = URL.createObjectURL(file);
+    showCoverPreview(draftCoverUrl);
+  });
+});
+
+document.querySelector("#library-close")!.addEventListener("click", () => closeLibraryEdit());
+document.querySelector("#library-cancel")!.addEventListener("click", () => closeLibraryEdit());
+document.querySelector("#library-save")!.addEventListener("click", () => void saveLibraryEdit());
+libraryEdit.addEventListener("click", (event) => {
+  if (event.target === libraryEdit) closeLibraryEdit();
+});
+libraryName.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  void saveLibraryEdit();
+});
 
 document.querySelector("#close-play")!.addEventListener("click", () => {
   if (!loadedGame) return;
@@ -2315,6 +2756,21 @@ document.querySelector("#forget")!.addEventListener("click", () => {
 
 alertYes.addEventListener("click", () => {
   const mode = alertMode;
+  if (mode === "drop-slot") {
+    const target = dropTarget;
+    closeAlert();
+    if (!target) return;
+    void (async () => {
+      try {
+        await forgetSlot(target.gameId, target.slot);
+        setBanner(`Save ${target.slot} apagado deste navegador.`);
+        await renderSaves();
+      } catch (error) {
+        setBanner(error instanceof Error ? error.message : "Não deu para apagar o save.");
+      }
+    })();
+    return;
+  }
   if (mode === "forget") {
     closeAlert();
     void (async () => {
@@ -2323,7 +2779,12 @@ alertYes.addEventListener("click", () => {
       ready.delete(game.id);
       if (session && loadedGame?.id === game.id) leaveRoom();
       if (loadedGame?.id === game.id) stopPlay();
-      renderGames();
+      if (isLibraryGame(game)) {
+        if (editingId === game.id) closeLibraryEdit();
+        if (selected.id === game.id) selected = localGame;
+        await refreshLibrary();
+      } else renderGames();
+      updateDrop();
       setBanner(`${game.title} saiu deste navegador.`);
     })();
     return;
@@ -2431,6 +2892,7 @@ applyZoom();
 void loadCoffee();
 paintVolume();
 updateDrop();
+paintTabs();
 renderGames();
 renderPeople();
 requestAnimationFrame(pump);
@@ -2439,6 +2901,7 @@ startTour();
 booting = (async () => {
   try {
     ready = new Set(await storedGames());
+    applyLibrary(await listLibrary());
     nick = await playerName();
     nickInput.value = nick;
     await refreshAccount();
@@ -2453,13 +2916,14 @@ booting = (async () => {
     peopleKey = "";
     renderPeople();
     const last = await lastGame();
-    const game = shelf.find((entry) => entry.id === last) ?? games.find((entry) => ready.has(entry.id));
-    if (game) {
+    const game = findGame(last) ?? games.find((entry) => ready.has(entry.id));
+    if (game && !plainGame(game)) {
       selected = game;
       updateDrop();
     }
+    paintTabs();
     renderGames();
-    if (game && ready.has(game.id)) await openStored(game);
+    if (game && game.id !== localGame.id && ready.has(game.id)) await openStored(game);
   } catch {
     setBanner("Não deu para abrir o banco deste navegador. A ROM vale só nesta visita.");
   }
