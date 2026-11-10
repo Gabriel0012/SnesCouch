@@ -102,6 +102,8 @@ const log = document.querySelector<HTMLElement>("#log")!;
 const chatForm = document.querySelector<HTMLFormElement>("#chat")!;
 const chatInput = document.querySelector<HTMLInputElement>("#chat-text")!;
 const leaveButton = document.querySelector<HTMLButtonElement>("#leave")!;
+const roomSetup = document.querySelector<HTMLElement>("#room-setup")!;
+const roomHost = document.querySelector<HTMLElement>("#room-host")!;
 const swapButton = document.querySelector<HTMLButtonElement>("#swap")!;
 const confirmBox = document.querySelector<HTMLElement>("#confirm")!;
 const confirmText = document.querySelector<HTMLElement>("#confirm-text")!;
@@ -109,6 +111,18 @@ const confirmYes = document.querySelector<HTMLButtonElement>("#confirm-yes")!;
 const confirmNo = document.querySelector<HTMLButtonElement>("#confirm-no")!;
 const picture = document.querySelector<HTMLElement>("#picture")!;
 const viewport = document.querySelector<HTMLElement>("#viewport")!;
+const FRAME_COLORS = [
+  { edge: "#1f5bff", ink: "#f4f7ff" },
+  { edge: "#e10600", ink: "#fff6f4" },
+  { edge: "#f5c518", ink: "#12141a" },
+  { edge: "#00a34a", ink: "#06210f" },
+];
+
+function paintFrame() {
+  const color = FRAME_COLORS[Math.floor(Math.random() * FRAME_COLORS.length)] ?? FRAME_COLORS[0];
+  viewport.style.setProperty("--frame", color.edge);
+  viewport.style.setProperty("--frame-ink", color.ink);
+}
 const savesOpen = document.querySelector<HTMLButtonElement>("#saves-open")!;
 const savesModal = document.querySelector<HTMLElement>("#saves-modal")!;
 const savesGrid = document.querySelector<HTMLElement>("#saves-grid")!;
@@ -928,6 +942,31 @@ function setRoomCode(code: string | null) {
   roomCode.textContent = code ?? "";
 }
 
+function ownerMark(): string {
+  if (!session) return "";
+  const code = roomCode.textContent?.trim() || "";
+  const name = session.role === "host" ? roomName().trim() : (roster?.host.name ?? "").trim();
+  return name || code;
+}
+
+function paintHostMark() {
+  const label = ownerMark();
+  roomHost.textContent = label;
+  roomHost.hidden = !label;
+}
+
+function setRoomChrome(on: boolean) {
+  if (on) paintFrame();
+  else {
+    viewport.style.removeProperty("--frame");
+    viewport.style.removeProperty("--frame-ink");
+  }
+  viewport.classList.toggle("in-room", on);
+  shown(roomSetup, !on, "left");
+  shown(leaveButton, on, "left");
+  paintHostMark();
+}
+
 let shownPads = "";
 
 function padKey(): string {
@@ -1447,7 +1486,7 @@ async function connect(role: Role, code: string) {
       roster = null;
       setChatEnabled(false);
       setRoomCode(null);
-      shown(leaveButton, false, "left");
+      setRoomChrome(false);
       shown(swapButton, false, "left");
       typingSent = false;
       hideConfirm();
@@ -1471,6 +1510,7 @@ async function connect(role: Role, code: string) {
     onRoster: (next) => {
       roster = next;
       renderPeople();
+      paintHostMark();
     },
     onSaveOffer: (offer) => {
       if (session !== mine || saveDialog) {
@@ -1509,7 +1549,7 @@ async function connect(role: Role, code: string) {
   });
   session = mine;
   setRoomCode(code);
-  shown(leaveButton, true, "left");
+  setRoomChrome(true);
   shown(swapButton, true, "left");
   const name = roomName();
   mine.setProfile(localControl(), name);
@@ -1520,7 +1560,7 @@ async function connect(role: Role, code: string) {
     await session.open();
   } catch (error) {
     if (session === mine) session = null;
-    shown(leaveButton, false, "left");
+    setRoomChrome(false);
     shown(swapButton, false, "left");
     setChatEnabled(false);
     setRoomCode(null);
@@ -1622,6 +1662,7 @@ function publishProfile() {
   if (!account) nick = nickInput.value.replace(/\s+/g, " ").trim().slice(0, 20);
   const name = roomName();
   if (account) nickInput.value = name;
+  paintHostMark();
   if (!session) return;
   const control = localControl();
   const next = `${control}\n${name}`;
@@ -1808,10 +1849,11 @@ function friendCard(friend: FriendCard, pending: "out" | null) {
   const text = document.createElement("span");
   const name = document.createElement("b");
   name.textContent = friend.name;
+  text.append(name, friendStatus(friend.status));
   if (pending === "out") {
     const meta = document.createElement("small");
     meta.textContent = "pedido enviado";
-    text.append(name, meta);
+    text.append(meta);
   } else {
     const meta = document.createElement("span");
     meta.className = "friend-meta";
@@ -1830,9 +1872,8 @@ function friendCard(friend: FriendCard, pending: "out" | null) {
       chip.textContent = "Convite enviado";
       meta.append(chip);
     }
-    text.append(name, meta);
+    text.append(meta);
   }
-  text.append(friendStatus(friend.status));
   who.append(text);
   const side = document.createElement("div");
   side.className = "friend-side";
@@ -2523,7 +2564,7 @@ function leaveRoom() {
   roster = null;
   setChatEnabled(false);
   setRoomCode(null);
-  shown(leaveButton, false, "left");
+  setRoomChrome(false);
   shown(swapButton, false, "left");
   typingSent = false;
   hideConfirm();
