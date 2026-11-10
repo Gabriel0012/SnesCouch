@@ -7,14 +7,22 @@ const UP = 1 << 4;
 const DOWN = 1 << 5;
 const LEFT = 1 << 6;
 
-test("o super de Haggar e Guy é frente, baixo, frente, baixo e ataque", () => {
+test("o super do Haggar é frente, diagonal e baixo com ataque", () => {
   const steps = superSteps("haggar", LEFT);
   assert.equal(steps[0], LEFT);
-  assert.equal(steps[5], DOWN);
-  assert.equal(steps[10], LEFT);
-  assert.equal(steps[15], DOWN | Y);
+  assert.equal(steps[3], LEFT | DOWN);
+  assert.equal(steps[6], DOWN | Y);
   assert.equal(steps.at(-1), DOWN | Y);
   assert.equal(steps.includes(RIGHT), false);
+});
+
+test("o super do Guy é frente, baixo e frente com ataque", () => {
+  const steps = superSteps("guy", LEFT);
+  assert.equal(steps[0], LEFT);
+  assert.equal(steps[3], DOWN);
+  assert.equal(steps[6], LEFT | Y);
+  assert.equal(steps.at(-1), LEFT | Y);
+  assert.equal(steps.includes(DOWN | Y), false);
 });
 
 test("o super da Lucia é baixo, baixo, frente e ataque", () => {

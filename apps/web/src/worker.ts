@@ -1,6 +1,7 @@
 import createSnes from "./generated/snes.js";
 import wasmUrl from "./generated/snes.wasm?url";
 import { Lockstep, type Slot } from "../../../packages/net/lockstep.ts";
+import { LEFT, RIGHT, superSteps, type Fighter } from "./supers.ts";
 
 type Core = {
   wasmMemory: WebAssembly.Memory;
@@ -121,6 +122,38 @@ async function frameShot(): Promise<Uint8Array | null> {
   } catch {
     return null;
   }
+}
+
+function blockStart(state: Uint8Array, name: string, size: number): number {
+  const header = `${name}:${String(size).padStart(6, "0")}:`;
+  const width = header.length;
+  for (let i = 0; i + width + size <= state.length; i++) {
+    let match = true;
+    for (let j = 0; j < width; j++) {
+      if (state[i + j] !== header.charCodeAt(j)) {
+        match = false;
+        break;
+      }
+    }
+    if (match) return i + width;
+  }
+  return -1;
+}
+
+function fighterByte(byte: number): (Fighter | "guy") | null {
+  if (byte === 1) return "guy";
+  if (byte === 2) return "haggar";
+  if (byte === 3) return "lucia";
+  if (byte === 4) return "dean";
+  return null;
+}
+
+function readFighterByte(port: 0 | 1): number | null {
+  const state = saveState();
+  if (!state) return null;
+  const ram = blockStart(state, "RAM", 0x20000);
+  if (ram < 0) return null;
+  return state[ram + (port === 0 ? 0x1f15 : 0x0f16)];
 }
 
 function saveState() {
@@ -249,8 +282,12 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
   }
   if (message.t === "super") {
     const port = message.port === 1 ? 1 : 0;
-    if (!Array.isArray(message.steps) || message.steps.length === 0 || message.steps.length > 90) return;
-    macro[port] = message.steps.map((step) => Number(step) & 0xffff);
+    const incoming = Array.isArray(message.steps) ? message.steps : [];
+    const fighter = fighterByte(readFighterByte(port) ?? -1);
+    const forward = incoming.some((step) => (Number(step) & LEFT) !== 0) ? LEFT : RIGHT;
+    const steps = fighter ? superSteps(fighter, forward) : incoming;
+    if (steps.length === 0 || steps.length > 90) return;
+    macro[port] = steps.map((step) => Number(step) & 0xffff);
     macroAt[port] = 0;
     return;
   }
