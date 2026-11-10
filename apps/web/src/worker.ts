@@ -1,7 +1,7 @@
 import createSnes from "./generated/snes.js";
 import wasmUrl from "./generated/snes.wasm?url";
 import { Lockstep, type Slot } from "../../../packages/net/lockstep.ts";
-import { LEFT, RIGHT, superSteps, type Fighter } from "./supers.ts";
+import { LEFT, RIGHT, specialSteps, superSteps, type Fighter } from "./supers.ts";
 
 type Core = {
   wasmMemory: WebAssembly.Memory;
@@ -32,8 +32,9 @@ interface RestoreMessage { t: "restore"; state: ArrayBuffer }
 interface ResetMessage { t: "reset"; slot?: Slot; delay?: number }
 interface Simple { t: "local" | "pause" | "checkpoint" | "stop" | "save" | "net-arm" }
 interface SuperMessage { t: "super"; port: 0 | 1; steps: number[] }
+interface SpecialMessage { t: "special"; port: 0 | 1; held: number; steps: number[] }
 
-type Incoming = LoadMessage | NetStart | NetRemote | NetResume | RestoreMessage | ResetMessage | Simple | SuperMessage;
+type Incoming = LoadMessage | NetStart | NetRemote | NetResume | RestoreMessage | ResetMessage | Simple | SuperMessage | SpecialMessage;
 
 let canvas: OffscreenCanvas | null = null;
 let ctx: OffscreenCanvasRenderingContext2D | null = null;
@@ -59,6 +60,12 @@ function peekMacro(port: 0 | 1, buttons: number): number {
   const steps = macro[port];
   if (!steps) return buttons & 0xffff;
   return (steps[macroAt[port]] ?? 0) & 0xffff;
+}
+
+function playMacro(port: 0 | 1, steps: number[]) {
+  if (steps.length === 0 || steps.length > 90) return;
+  macro[port] = steps.map((step) => Number(step) & 0xffff);
+  macroAt[port] = 0;
 }
 
 function commitMacro(port: 0 | 1) {
@@ -286,9 +293,17 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
     const fighter = fighterByte(readFighterByte(port) ?? -1);
     const forward = incoming.some((step) => (Number(step) & LEFT) !== 0) ? LEFT : RIGHT;
     const steps = fighter ? superSteps(fighter, forward) : incoming;
-    if (steps.length === 0 || steps.length > 90) return;
-    macro[port] = steps.map((step) => Number(step) & 0xffff);
-    macroAt[port] = 0;
+    playMacro(port, steps);
+    return;
+  }
+  if (message.t === "special") {
+    const port = message.port === 1 ? 1 : 0;
+    const incoming = Array.isArray(message.steps) ? message.steps : [];
+    const fighter = fighterByte(readFighterByte(port) ?? -1);
+    const forward = incoming.some((step) => (Number(step) & LEFT) !== 0) ? LEFT : RIGHT;
+    const held = Number(message.held) & 0xffff;
+    const steps = fighter ? specialSteps(fighter, forward, held) : incoming;
+    playMacro(port, steps);
     return;
   }
   if (message.t === "net-arm") {

@@ -38,7 +38,7 @@ import { controlGuide, keyboardScheme, padLabel } from "./pads.ts";
 import { games, isLibraryGame, localGame, localRomId, looksLikeSnesRom, matchRom, sha1Of, titleFromFile, type Game, type LibraryGame } from "./rom.ts";
 import { decodeSaveFile, encodeSaveFile } from "./save-file.ts";
 import { OnlineSession, type ChatLine, type Role, type Seat } from "./session.ts";
-import { FIGHTERS, LEFT, RIGHT, SELECT, fighterLabel, superSteps, type Fighter } from "./supers.ts";
+import { FIGHTERS, LEFT, RIGHT, SELECT, X, fighterLabel, specialSteps, superSteps, type Fighter } from "./supers.ts";
 import { bindScreen, setCrt, whenCrtDrops } from "./crt.ts";
 import { conceal, reveal, shown } from "./motion.ts";
 import { forgetRom, forgetSlot, lastGame, listLibrary, loadRom, loadState, playerName, renameRom, saveList, saveRom, saveSlots, saveState, setPlayerName, setRomCover, storedGames } from "./store.ts";
@@ -771,6 +771,7 @@ function clearChat() {
 const fighters: Fighter[] = ["haggar", "haggar"];
 const facing: [number, number] = [RIGHT, RIGHT];
 const superDown = [false, false];
+const specialDown = [false, false];
 let typingIdle = 0;
 let typingSent = false;
 type SaveDialog =
@@ -931,6 +932,7 @@ function fillManual() {
   if (online) note.push("Na sala, este manual mostra só o controle desta máquina.");
   if (selected.id === "final-fight-3") {
     note.push("Select junto com o Super troca Haggar e Guy, Lucia ou Dean. Haggar, Guy e Dean precisam estar segurando o inimigo.");
+    note.push("O X faz o golpe. No Dean, Baixo junto puxa de longe. Na Lucia, Cima junto é o chute de fogo.");
   }
   if (selected.id === "king-of-dragons") {
     note.push("A magia do X gasta vida. O escudo no A só entra se for ligado no Option Mode.");
@@ -2882,6 +2884,18 @@ function pollSupers(padsNow: [number, number], mode: "local" | "online") {
   }
 }
 
+function pollSpecials(padsNow: [number, number], mode: "local" | "online") {
+  if (loadedGame?.id !== "final-fight-3" || !worker) return;
+  const pressed: [boolean, boolean] = [(padsNow[0] & X) !== 0, mode === "online" ? false : (padsNow[1] & X) !== 0];
+  for (const port of [0, 1] as const) {
+    if (pressed[port] && !specialDown[port]) {
+      const forward = padsNow[port] & LEFT ? LEFT : padsNow[port] & RIGHT ? RIGHT : facing[port];
+      worker.postMessage({ t: "special", port, held: padsNow[port], steps: specialSteps(fighters[port], forward, padsNow[port]) });
+    }
+    specialDown[port] = pressed[port];
+  }
+}
+
 window.addEventListener("blur", () => writePads(0, 0));
 
 async function loadCoffee() {
@@ -2905,14 +2919,16 @@ let heldControls = 0;
 
 function pump() {
   const mode = session ? "online" : "local";
-  const padsNow = readPads(mode);
+  const padsNow = readPads(mode, loadedGame?.id ?? "");
   const supers = readSupers(mode);
   const bits = padsNow[0] | padsNow[1] | (supers[0] ? 1 << 14 : 0) | (supers[1] ? 1 << 15 : 0);
   const fresh = bits & ~heldControls;
   heldControls = bits;
   if (fresh && composing()) leaveComposer();
-  writePads(padsNow[0], padsNow[1]);
+  const fight = loadedGame?.id === "final-fight-3";
+  writePads(fight ? padsNow[0] & ~X : padsNow[0], fight ? padsNow[1] & ~X : padsNow[1]);
   pollSupers(padsNow, mode);
+  pollSpecials(padsNow, mode);
   if (session) publishProfile();
   renderPeople();
   if (!manual.hidden && padKey() !== shownPads) fillManual();

@@ -86,14 +86,14 @@ function layoutOf(pad: PadLike): Layout {
   return "standard";
 }
 
-function standardBits(pad: PadLike): number {
+function standardBits(pad: PadLike, superShoulder: boolean): number {
   let bits = 0;
   if (pressed(pad, 0)) bits |= B;
   if (pressed(pad, 1)) bits |= A;
   if (pressed(pad, 2)) bits |= Y;
   if (pressed(pad, 3)) bits |= X;
   if (pressed(pad, 4) || pressed(pad, 6)) bits |= L;
-  if (pressed(pad, 5)) bits |= R;
+  if (pressed(pad, 7) || (!superShoulder && pressed(pad, 5))) bits |= R;
   if (pressed(pad, 8)) bits |= SELECT;
   if (pressed(pad, 9)) bits |= START;
   if (pressed(pad, 12)) bits |= UP;
@@ -104,14 +104,14 @@ function standardBits(pad: PadLike): number {
   return bits;
 }
 
-function psBits(pad: PadLike): number {
+function psBits(pad: PadLike, superShoulder: boolean): number {
   let bits = 0;
   if (pressed(pad, 1)) bits |= B;
   if (pressed(pad, 2)) bits |= A;
   if (pressed(pad, 0)) bits |= Y;
   if (pressed(pad, 3)) bits |= X;
   if (pressed(pad, 4) || trigger(pad.axes[3])) bits |= L;
-  if (pressed(pad, 5)) bits |= R;
+  if (pressed(pad, 7) || trigger(pad.axes[4]) || (!superShoulder && pressed(pad, 5))) bits |= R;
   if (pressed(pad, 8)) bits |= SELECT;
   if (pressed(pad, 9)) bits |= START;
   bits |= stickBits(pad.axes[0], pad.axes[1]);
@@ -147,14 +147,14 @@ function buffaloBits(pad: PadLike): number {
   return bits;
 }
 
-function snesBitsRaw(pad: PadLike): number {
+function snesBitsRaw(pad: PadLike, superShoulder: boolean): number {
   let bits = 0;
   if (pressed(pad, 0)) bits |= B;
   if (pressed(pad, 1)) bits |= A;
   if (pressed(pad, 2)) bits |= Y;
   if (pressed(pad, 3)) bits |= X;
   if (pressed(pad, 4) || pressed(pad, 6)) bits |= L;
-  if (pressed(pad, 5) || pressed(pad, 15)) bits |= R;
+  if (pressed(pad, 15) || (!superShoulder && pressed(pad, 5))) bits |= R;
   if (pressed(pad, 8)) bits |= SELECT;
   if (pressed(pad, 9)) bits |= START;
   bits |= stickBits(pad.axes[0], pad.axes[1]);
@@ -163,19 +163,20 @@ function snesBitsRaw(pad: PadLike): number {
 }
 
 /** SNES button bits for one physical pad. Position follows the Super Nintendo diamond. */
-export function snesBits(pad: PadLike | null): number {
+export function snesBits(pad: PadLike | null, gameId = ""): number {
   if (!pad) return 0;
+  const superShoulder = gameId === "final-fight-3";
   switch (layoutOf(pad)) {
     case "ps":
-      return psBits(pad);
+      return psBits(pad, superShoulder);
     case "dragon":
       return dragonBits(pad);
     case "buffalo":
       return buffaloBits(pad);
     case "snes":
-      return snesBitsRaw(pad);
+      return snesBitsRaw(pad, superShoulder);
     default:
-      return standardBits(pad);
+      return standardBits(pad, superShoulder);
   }
 }
 
@@ -184,18 +185,12 @@ function analogDown(pad: PadLike, index: number): boolean {
   return !!button && (button.pressed || (button.value ?? 0) > 0.2);
 }
 
-function axisDown(pad: PadLike, index: number): boolean {
-  const axis = pad.axes[index];
-  return axis !== undefined && axis > 0.2;
-}
-
-/** R2 is the Final Fight super, so it stays off the SNES R button. */
+/** R1, RB, or the Super Nintendo R fires the Final Fight super and stays off the SNES R button. */
 export function superPressed(pad: PadLike | null): boolean {
   if (!pad) return false;
   const kind = layoutOf(pad);
-  if (kind === "dragon" || kind === "buffalo" || kind === "snes") return false;
-  if (analogDown(pad, 7)) return true;
-  return axisDown(pad, 4) || axisDown(pad, 5);
+  if (kind === "dragon" || kind === "buffalo") return false;
+  return analogDown(pad, 5);
 }
 
 export interface GuideRow {
@@ -217,9 +212,9 @@ function standardGuide(label: string): GuideRow[] {
     { button: face[2], does: "Y" },
     { button: face[3], does: "X" },
     { button: shoulder[0], does: "L" },
-    { button: shoulder[1], does: "R" },
+    { button: shoulder[1], does: "Super" },
     { button: shoulder[2], does: "L" },
-    { button: shoulder[3], does: "Super" },
+    { button: shoulder[3], does: "R" },
     { button: menu[0], does: "Select" },
     { button: menu[1], does: "Start" },
   ];
@@ -238,9 +233,9 @@ export function controlGuide(pad: PadLike): GuideRow[] {
         { button: "Quadrado", does: "Y" },
         { button: "Triângulo", does: "X" },
         { button: "L1", does: "L" },
-        { button: "R1", does: "R" },
+        { button: "R1", does: "Super" },
         { button: "L2", does: "L" },
-        { button: "R2", does: "Super" },
+        { button: "R2", does: "R" },
         { button: label === "PS5" ? "Create" : "Share", does: "Select" },
         { button: "Options", does: "Start" },
       ];
@@ -276,7 +271,7 @@ export function controlGuide(pad: PadLike): GuideRow[] {
         { button: "Y", does: "Y" },
         { button: "X", does: "X" },
         { button: "L", does: "L" },
-        { button: "R", does: "R" },
+        { button: "R", does: "Super" },
         { button: "Select", does: "Select" },
         { button: "Start", does: "Start" },
       ];

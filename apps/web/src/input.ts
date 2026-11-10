@@ -89,17 +89,17 @@ export function readSupers(mode: "local" | "online" = "local"): [boolean, boolea
   return [schemeSuper(0, seats, blocked) || superPressed(seats[0]), schemeSuper(1, seats, blocked) || superPressed(seats[1])];
 }
 
-export function readPads(mode: "local" | "online" = "local"): [number, number] {
+export function readPads(mode: "local" | "online" = "local", gameId = ""): [number, number] {
   if (!document.hasFocus()) return [0, 0];
   const seats = livePads();
   const blocked = typing(document.activeElement);
   if (mode === "online") {
     const keys = blocked ? 0 : fromKeys(PLAYER_KEYS[0]);
-    return [keys | snesBits(seats[0]) | touchBits, 0];
+    return [keys | snesBits(seats[0], gameId) | touchBits, 0];
   }
   return [
-    schemeBits(0, seats, blocked) | snesBits(seats[0]) | touchBits,
-    schemeBits(1, seats, blocked) | snesBits(seats[1]),
+    schemeBits(0, seats, blocked) | snesBits(seats[0], gameId) | touchBits,
+    schemeBits(1, seats, blocked) | snesBits(seats[1], gameId),
   ];
 }
 

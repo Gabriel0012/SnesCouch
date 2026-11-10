@@ -36,7 +36,7 @@ const BY_GAME: Record<string, Record<string, string>> = {
     Y: "Soco",
     B: "Pulo",
     A: "Especial",
-    X: "Sem uso",
+    X: "Golpe",
     L: "Segura a frente",
     R: "Segura a frente",
     Select: "Menu",
@@ -119,6 +119,9 @@ const SAME: Record<SpotId, string[]> = {
   super: [],
 };
 
+const TRIGGER = new Set(["LT", "RT", "L2", "R2"]);
+const BUMPER = new Set(["LB", "RB", "L1", "R1", "L", "R"]);
+
 /** In-game action for a Super Nintendo button. Null hides a binding this game never uses. */
 export function actionFor(gameId: string, does: string): string | null {
   if ((gameId === "local" || gameId.startsWith("local:")) && does === "Super") return null;
@@ -169,6 +172,10 @@ function hintFor(id: SpotId, buttons: string[], device: string): string {
   return listed(buttons);
 }
 
+function bumpers(buttons: string[]): string[] {
+  return buttons.filter((button) => BUMPER.has(button));
+}
+
 /** One callout per Super Nintendo button, in diagram order. */
 export function spotsFor(guide: GuideLike[], gameId: string, device: string): Spot[] {
   const grouped = new Map<SpotId, string[]>();
@@ -179,13 +186,24 @@ export function spotsFor(guide: GuideLike[], gameId: string, device: string): Sp
     list.push(row.button);
     grouped.set(id, list);
   }
+  const superBumpers = bumpers(grouped.get("super") ?? []);
+  const superAction = actionFor(gameId, "Super");
+  if (!superAction && superBumpers.length) {
+    grouped.set("r", [...superBumpers, ...(grouped.get("r") ?? [])]);
+  }
   const spots: Spot[] = [];
   for (const id of ORDER) {
+    if (id === "r" && superAction && superBumpers.length) {
+      spots.push({ id, action: superAction, hint: hintFor(id, superBumpers, device), idle: superAction === "Sem uso" });
+      continue;
+    }
     const buttons = grouped.get(id);
     if (!buttons) continue;
+    const shown = id === "l" || id === "r" ? buttons.filter((button) => !TRIGGER.has(button)) : buttons;
+    if ((id === "l" || id === "r") && shown.length === 0) continue;
     const action = actionFor(gameId, SPOT_DOES[id]);
     if (!action) continue;
-    spots.push({ id, action, hint: hintFor(id, buttons, device), idle: action === "Sem uso" });
+    spots.push({ id, action, hint: hintFor(id, shown, device), idle: action === "Sem uso" });
   }
   return spots;
 }
@@ -197,7 +215,8 @@ export function extraKeys(guide: GuideLike[] | null, gameId: string, superKey: s
   const rows: ExtraKey[] = [];
   if (superKey) rows.push({ label: superKey, wide: false, action });
   for (const row of guide ?? []) {
-    if (row.does === "Super") rows.push({ label: row.button, wide: false, action });
+    if (row.does !== "Super" || BUMPER.has(row.button)) continue;
+    rows.push({ label: row.button, wide: false, action });
   }
   return rows;
 }

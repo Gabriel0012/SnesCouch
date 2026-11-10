@@ -111,25 +111,7 @@ test("iBuffalo clássico segue o próprio mapa", () => {
   assert.equal(snesBits(buffalo), A | R | START | UP);
 });
 
-test("o gatilho analógico do PS4 no eixo também é o super", () => {
-  const axis4 = pad({
-    id: "Wireless Controller (Vendor: 054c Product: 09cc)",
-    buttons: hold([]),
-    axes: [0, 0, 0, 0, 0.8],
-  });
-  const axis5 = pad({
-    id: "Wireless Controller (Vendor: 054c Product: 09cc)",
-    mapping: "standard",
-    buttons: hold([]),
-    axes: [0, 0, 0, 0, 0, 0.8],
-  });
-  assert.equal(superPressed(axis4), true);
-  assert.equal(snesBits(axis4) & R, 0);
-  assert.equal(superPressed(axis5), true);
-  assert.equal(snesBits(axis5) & R, 0);
-});
-
-test("R2 dispara o super e não segura o R do Super Nintendo", () => {
+test("RB dispara o super e não segura o R do Super Nintendo", () => {
   const xbox = pad({
     id: "Xbox Series Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b12)",
     mapping: "standard",
@@ -138,13 +120,39 @@ test("R2 dispara o super e não segura o R do Super Nintendo", () => {
   });
   assert.equal(snesBits(xbox) & R, R);
   assert.equal(superPressed(xbox), true);
+  const onlyBumper = pad({
+    id: "Xbox Series Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b12)",
+    mapping: "standard",
+    buttons: hold([5]),
+    axes: [0, 0, 0, 0],
+  });
+  assert.equal(snesBits(onlyBumper, "final-fight-3") & R, 0);
+  assert.equal(snesBits(onlyBumper, "pocky-rocky-2") & R, R);
+  const onlyTrigger = pad({
+    id: "Xbox Series Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b12)",
+    mapping: "standard",
+    buttons: hold([7]),
+    axes: [0, 0, 0, 0],
+  });
+  assert.equal(superPressed(onlyTrigger), false);
   const ps4 = pad({
     id: "Wireless Controller (Vendor: 054c Product: 09cc)",
-    buttons: hold([]),
+    buttons: hold([5]),
     axes: [0, 0, 0, 0, 0.9],
   });
-  assert.equal(snesBits(ps4) & R, 0);
+  assert.equal(snesBits(ps4) & R, R);
   assert.equal(superPressed(ps4), true);
+});
+
+test("o R do Super Nintendo dispara o super", () => {
+  const snes = pad({
+    id: "SNES Controller (Vendor: 057e Product: 2017)",
+    buttons: hold([5]),
+    axes: [],
+  });
+  assert.equal(superPressed(snes), true);
+  assert.equal(snesBits(snes, "final-fight-3") & R, 0);
+  assert.equal(snesBits(snes, "pocky-rocky-2") & R, R);
 });
 
 test("o manual do Xbox e do PS4 aponta o botão certo", () => {
@@ -153,9 +161,11 @@ test("o manual do Xbox e do PS4 aponta o botão certo", () => {
   const xboxGuide = controlGuide(xbox);
   const ps4Guide = controlGuide(ps4);
   assert.equal(xboxGuide.find((row) => row.button === "A")?.does, "B");
-  assert.equal(xboxGuide.find((row) => row.button === "RT")?.does, "Super");
+  assert.equal(xboxGuide.find((row) => row.button === "RB")?.does, "Super");
+  assert.equal(xboxGuide.find((row) => row.button === "RT")?.does, "R");
   assert.equal(ps4Guide.find((row) => row.button === "X")?.does, "B");
-  assert.equal(ps4Guide.find((row) => row.button === "R2")?.does, "Super");
+  assert.equal(ps4Guide.find((row) => row.button === "R1")?.does, "Super");
+  assert.equal(ps4Guide.find((row) => row.button === "R2")?.does, "R");
   assert.equal(ps4Guide.find((row) => row.button === "Quadrado")?.does, "Y");
 });
 
