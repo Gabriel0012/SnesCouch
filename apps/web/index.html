@@ -33,6 +33,7 @@
         <nav id="pick" aria-label="Jogos"></nav>
       </div>
       <section id="stage" aria-label="Tela">
+        <div class="screen-frame">
         <div id="viewport" class="arrive">
           <label id="drop" class="drop">
             Solte a ROM aqui
@@ -62,6 +63,8 @@
               </div>
             </div>
           </div>
+        </div>
+        <button id="manual-open" type="button">Manual</button>
         </div>
         <div class="toolbar arrive">
           <div class="cluster" role="group" aria-label="Tamanho da tela">
@@ -156,70 +159,85 @@
         </div>
       </section>
       <aside id="panel" class="arrive">
-        <section>
-          <div class="room-head">
+        <details class="fold" id="fold-room" open>
+          <summary class="room-head">
             <h2>
               <span id="room-code" hidden></span>
               <span id="room-title">Sala</span>
             </h2>
             <button id="room-close" type="button" aria-label="Fechar">×</button>
-          </div>
-          <div id="account-out">
-            <p class="note">Entre para ver amigos. A ROM e os saves continuam neste navegador.</p>
-            <div class="row">
-              <a class="login" href="/api/auth/discord" target="_blank" rel="noopener" aria-label="Entrar com Discord"><img src="/src/assets/discord.png" alt="" />discord</a>
-              <a class="login" href="/api/auth/google" target="_blank" rel="noopener" aria-label="Entrar com Google"><img src="/src/assets/google.png" alt="" />google</a>
-            </div>
-          </div>
-          <div id="account-in" hidden>
-            <div class="account-who">
-              <img id="account-avatar" alt="" width="36" height="36" hidden />
-              <div>
-                <b id="account-name"></b>
-                <small>Amigo <button id="account-code" type="button"></button></small>
+          </summary>
+          <div class="fold-body">
+            <div id="account-out">
+              <p class="note">Entre para ver amigos. A ROM e os saves continuam neste navegador.</p>
+              <div class="row">
+                <a class="login" href="/api/auth/discord" target="_blank" rel="noopener" aria-label="Entrar com Discord"><img src="/src/assets/discord.png" alt="" />discord</a>
+                <a class="login" href="/api/auth/google" target="_blank" rel="noopener" aria-label="Entrar com Google"><img src="/src/assets/google.png" alt="" />google</a>
               </div>
             </div>
-            <button id="logout" type="button">Sair da conta</button>
-          </div>
-          <label class="nick">Seu nome
-            <input id="nick" maxlength="20" autocomplete="nickname" spellcheck="false" placeholder="Nome na sala" />
-          </label>
-          <p id="room-state">Partida local. A sala leva o outro controle para outra casa.</p>
-          <div class="row room-actions">
-            <button id="create" type="button"><i aria-hidden="true"></i>Criar sala</button>
-            <div class="join-line">
-              <input id="code" maxlength="5" autocomplete="off" spellcheck="false" placeholder="Código" />
-              <button id="copy" type="button" aria-label="Copiar"></button>
-              <button id="join" type="button"><i aria-hidden="true"></i>Entrar</button>
+            <div id="account-in" hidden>
+              <div class="account-who">
+                <img id="account-avatar" alt="" width="36" height="36" hidden />
+                <div class="account-id">
+                  <div class="account-line">
+                    <b id="account-name"></b>
+                    <span class="my-code">#<span id="account-code"></span></span>
+                    <button id="copy-code" type="button" aria-label="Copiar código de amigo"></button>
+                    <img id="my-device" class="device-icon" alt="" width="28" height="28" />
+                  </div>
+                  <button id="my-status" type="button" class="status-line">
+                    <i aria-hidden="true"></i><span>online</span>
+                  </button>
+                  <select id="my-status-pick" hidden aria-label="Seu status">
+                    <option value="auto">Online</option>
+                    <option value="away">Ausente</option>
+                    <option value="offline">Offline</option>
+                  </select>
+                </div>
+              </div>
+              <button id="logout" type="button">Sair da conta</button>
             </div>
-            <button id="leave" type="button" hidden>Sair da sala</button>
+            <label class="nick">Seu nome
+              <input id="nick" maxlength="20" autocomplete="nickname" spellcheck="false" placeholder="Nome na sala" />
+            </label>
+            <p id="room-state">Partida local. A sala leva o outro controle para outra casa.</p>
+            <div class="row room-actions">
+              <button id="create" type="button"><i aria-hidden="true"></i>Criar sala</button>
+              <div class="join-line">
+                <input id="code" maxlength="5" autocomplete="off" spellcheck="false" placeholder="Código" />
+                <button id="copy" type="button" aria-label="Copiar"></button>
+                <button id="join" type="button"><i aria-hidden="true"></i>Entrar</button>
+              </div>
+              <button id="leave" type="button" hidden>Sair da sala</button>
+            </div>
+            <p id="delay"></p>
+            <h2>Jogadores</h2>
+            <ul id="players" class="people"></ul>
+            <button id="swap" type="button" hidden>Trocar jogadores</button>
           </div>
-          <p id="delay"></p>
-        </section>
-        <section>
-          <h2>Jogadores</h2>
-          <ul id="players" class="people"></ul>
-          <button id="swap" type="button" hidden>Trocar jogadores</button>
-        </section>
-        <section id="invites" hidden>
-          <div id="room-invites" hidden>
-            <h2>Convite para entrar na sala</h2>
-            <div id="room-invite-list"></div>
+        </details>
+        <details class="fold" id="fold-friends" hidden open>
+          <summary>Amigos</summary>
+          <div class="fold-body">
+            <section id="invites" hidden>
+              <div id="room-invites" hidden>
+                <h2>Convite para entrar na sala</h2>
+                <div id="room-invite-list"></div>
+              </div>
+              <div id="friend-invites" hidden>
+                <h2>Convite de amizade</h2>
+                <div id="friend-invite-list"></div>
+              </div>
+            </section>
+            <section id="friends">
+              <form id="friend-add" class="row">
+                <input id="friend-code" maxlength="6" autocomplete="off" spellcheck="false" placeholder="Código" />
+                <button type="submit">Pedir</button>
+              </form>
+              <div id="friend-list"></div>
+            </section>
           </div>
-          <div id="friend-invites" hidden>
-            <h2>Convite de amizade</h2>
-            <div id="friend-invite-list"></div>
-          </div>
-        </section>
-        <section id="friends" hidden>
-          <h2>Amigos</h2>
-          <form id="friend-add" class="row">
-            <input id="friend-code" maxlength="6" autocomplete="off" spellcheck="false" placeholder="Código" />
-            <button type="submit">Pedir</button>
-          </form>
-          <div id="friend-list"></div>
-        </section>
-        <button id="manual-open" type="button">Manual</button>
+        </details>
       </aside>
     </div>
     <button id="room-backdrop" type="button" hidden aria-label="Fechar sala"></button>

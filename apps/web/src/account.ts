@@ -7,12 +7,17 @@ export class AccountError extends Error {
   }
 }
 
+export type PresenceStatus = "online" | "away" | "offline";
+export type PresenceMode = "auto" | "away" | "offline";
+export type DeviceKind = "phone" | "desktop";
+
 export interface AccountUser {
   id: string;
   name: string;
   provider: "discord" | "google";
   friendCode: string;
   hasAvatar: boolean;
+  presence: PresenceMode;
 }
 
 export interface CloudSlot {
@@ -27,6 +32,9 @@ export interface FriendCard {
   friendCode: string;
   roomCode: string | null;
   hasAvatar: boolean;
+  status: PresenceStatus;
+  device: DeviceKind | null;
+  inviteExpiresAt: number | null;
 }
 
 export interface FriendLists {
@@ -51,12 +59,14 @@ function asUser(value: unknown): AccountUser | null {
   const user = value as Partial<AccountUser>;
   if (user.provider !== "discord" && user.provider !== "google") return null;
   if (typeof user.id !== "string" || typeof user.name !== "string" || typeof user.friendCode !== "string") return null;
+  const presence: PresenceMode = user.presence === "away" || user.presence === "offline" ? user.presence : "auto";
   return {
     id: user.id,
     name: user.name,
     provider: user.provider,
     friendCode: user.friendCode,
     hasAvatar: Boolean(user.hasAvatar),
+    presence,
   };
 }
 
@@ -64,12 +74,18 @@ function asFriend(value: unknown): FriendCard | null {
   if (!value || typeof value !== "object") return null;
   const friend = value as Partial<FriendCard>;
   if (typeof friend.id !== "string" || typeof friend.name !== "string" || typeof friend.friendCode !== "string") return null;
+  const status: PresenceStatus = friend.status === "online" || friend.status === "away" || friend.status === "offline"
+    ? friend.status
+    : "offline";
   return {
     id: friend.id,
     name: friend.name,
     friendCode: friend.friendCode,
     roomCode: typeof friend.roomCode === "string" ? friend.roomCode : null,
     hasAvatar: Boolean(friend.hasAvatar),
+    status,
+    device: status === "offline" ? null : friend.device === "phone" || friend.device === "desktop" ? friend.device : null,
+    inviteExpiresAt: typeof friend.inviteExpiresAt === "number" ? friend.inviteExpiresAt : null,
   };
 }
 
@@ -213,6 +229,20 @@ export async function acceptInvite(id: string): Promise<string> {
 
 export async function declineInvite(id: string): Promise<void> {
   const response = await fetch(`/api/invites/${id}/decline`, { method: "POST" });
+  if (!response.ok) await fail(response);
+}
+
+export async function postPresence(body: {
+  beat?: "active" | "live" | "gone";
+  device?: DeviceKind;
+  mode?: PresenceMode;
+}): Promise<void> {
+  const response = await fetch("/api/me/presence", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    keepalive: body.beat === "gone",
+  });
   if (!response.ok) await fail(response);
 }
 

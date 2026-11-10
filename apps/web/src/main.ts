@@ -14,12 +14,15 @@ import {
   loadFriends,
   loadInvites,
   logoutAccount,
+  postPresence,
   publishOpenRoom,
   removeFriend,
   uploadSave,
   type AccountUser,
+  type DeviceKind,
   type FriendCard,
   type FriendLists,
+  type PresenceMode,
   type RoomInvite,
 } from "./account.ts";
 import cartUrl from "./assets/snes-cart.png";
@@ -27,6 +30,8 @@ import marioUrl from "./assets/mario.png";
 import luigiUrl from "./assets/luigi.png";
 import inviteYesUrl from "./assets/invite-yes.png";
 import inviteNoUrl from "./assets/invite-no.png";
+import phoneUrl from "./assets/device-phone.png";
+import desktopUrl from "./assets/device-desktop.png";
 import saveIconUrl from "./assets/save-floppy.png";
 import { Speaker } from "./audio.ts";
 import { kindFromLabel, padIcon } from "./icons.ts";
@@ -74,8 +79,14 @@ const accountOut = document.querySelector<HTMLElement>("#account-out")!;
 const accountIn = document.querySelector<HTMLElement>("#account-in")!;
 const accountAvatar = document.querySelector<HTMLImageElement>("#account-avatar")!;
 const accountName = document.querySelector<HTMLElement>("#account-name")!;
-const accountCode = document.querySelector<HTMLButtonElement>("#account-code")!;
+const accountCode = document.querySelector<HTMLElement>("#account-code")!;
+const copyCode = document.querySelector<HTMLButtonElement>("#copy-code")!;
+const myDevice = document.querySelector<HTMLImageElement>("#my-device")!;
+const myStatus = document.querySelector<HTMLButtonElement>("#my-status")!;
+const myStatusText = myStatus.querySelector("span")!;
+const myStatusPick = document.querySelector<HTMLSelectElement>("#my-status-pick")!;
 const logoutButton = document.querySelector<HTMLButtonElement>("#logout")!;
+const foldFriends = document.querySelector<HTMLDetailsElement>("#fold-friends")!;
 const friendsSection = document.querySelector<HTMLElement>("#friends")!;
 const friendForm = document.querySelector<HTMLFormElement>("#friend-add")!;
 const friendCodeInput = document.querySelector<HTMLInputElement>("#friend-code")!;
@@ -165,6 +176,12 @@ let dropTarget: { gameId: string; slot: number } | null = null;
 let importSlot: number | null = null;
 let inviteTimer = 0;
 let inviteTick = 0;
+const IDLE_MS = 15 * 60 * 1000;
+let lastInput = Date.now();
+let presenceTimer = 0;
+let lastBeatAt = 0;
+let lastBeatKind = "";
+let myMode: PresenceMode = "auto";
 let liveSocket: WebSocket | null = null;
 let liveRetry = 0;
 let liveWait = 0;
@@ -1618,7 +1635,9 @@ function dropHostedRoom() {
     hostedCode = null;
     return;
   }
-  void queueRoom(null);
+  void queueRoom(null).finally(() => {
+    void paintFriends();
+  });
 }
 
 function joinCode(raw: string) {
@@ -1635,12 +1654,16 @@ function paintAccount() {
   const logged = Boolean(account);
   accountOut.hidden = logged;
   accountIn.hidden = !logged;
+  foldFriends.hidden = !logged;
   friendsSection.hidden = !logged;
   savesCloud.hidden = !logged || !cloudSaves;
   nickInput.disabled = logged;
   if (account) {
     accountName.textContent = account.name;
     accountCode.textContent = account.friendCode;
+    myMode = account.presence;
+    paintMyDevice();
+    paintMyStatus();
     nickInput.value = roomName();
     if (account.hasAvatar) {
       accountAvatar.hidden = false;
@@ -1657,6 +1680,7 @@ function paintAccount() {
   renderPeople();
   if (session) publishProfile();
   watchInvites();
+  watchPresence();
 }
 
 async function refreshAccount() {
@@ -1675,6 +1699,99 @@ async function refreshAccount() {
   }
 }
 
+function thisDevice(): DeviceKind {
+  const narrow = window.matchMedia("(max-width: 720px)").matches;
+  const coarse = window.matchMedia("(pointer: coarse)").matches;
+  const mobile = /Android|iPhone|iPod|Mobile/i.test(navigator.userAgent);
+  return mobile || (narrow && coarse) ? "phone" : "desktop";
+}
+
+function deviceIcon(kind: DeviceKind): HTMLImageElement {
+  const img = document.createElement("img");
+  img.className = "device-icon";
+  img.src = kind === "phone" ? phoneUrl : desktopUrl;
+  img.alt = kind === "phone" ? "Celular" : "Computador";
+  img.width = 28;
+  img.height = 28;
+  return img;
+}
+
+function friendStatus(status: FriendCard["status"]): HTMLElement {
+  const line = document.createElement("span");
+  line.className = `status-line ${status}`;
+  const dot = document.createElement("i");
+  dot.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  label.textContent = status === "online" ? "online" : status === "away" ? "ausente" : "offline";
+  line.append(dot, label);
+  return line;
+}
+
+function paintMyDevice() {
+  const kind = thisDevice();
+  myDevice.src = kind === "phone" ? phoneUrl : desktopUrl;
+  myDevice.alt = kind === "phone" ? "Celular" : "Computador";
+}
+
+function myShownStatus(): FriendCard["status"] {
+  if (myMode === "offline") return "offline";
+  if (myMode === "away") return "away";
+  if (Date.now() - lastInput < IDLE_MS) return "online";
+  return "away";
+}
+
+function paintMyStatus() {
+  const status = myShownStatus();
+  myStatus.className = `status-line ${status}`;
+  myStatusText.textContent = status === "online" ? "online" : status === "away" ? "ausente" : "offline";
+}
+
+function closeStatusPick(focusBack = false) {
+  myStatusPick.hidden = true;
+  myStatus.hidden = false;
+  if (focusBack) myStatus.focus();
+}
+
+async function beat(kind: "active" | "live" | "gone") {
+  if (!account) return;
+  const now = Date.now();
+  if (kind !== "gone" && kind === lastBeatKind && now - lastBeatAt < 15_000) return;
+  lastBeatAt = now;
+  lastBeatKind = kind;
+  try {
+    await postPresence({ beat: kind, device: kind === "gone" ? undefined : thisDevice() });
+  } catch {
+    /* o próximo pulso tenta de novo */
+  }
+}
+
+function noteActivity() {
+  const idle = Date.now() - lastInput >= IDLE_MS;
+  lastInput = Date.now();
+  if (account && myStatusPick.hidden) paintMyStatus();
+  if (idle && account) void beat("active");
+}
+
+function watchPresence() {
+  if (!account) {
+    window.clearInterval(presenceTimer);
+    presenceTimer = 0;
+    return;
+  }
+  if (presenceTimer) {
+    paintMyStatus();
+    return;
+  }
+  lastInput = Date.now();
+  void beat("active");
+  presenceTimer = window.setInterval(() => {
+    if (!account) return;
+    void beat(Date.now() - lastInput < IDLE_MS ? "active" : "live");
+    if (myStatusPick.hidden) paintMyStatus();
+  }, 20_000);
+  paintMyStatus();
+}
+
 function friendCard(friend: FriendCard, pending: "out" | null) {
   const card = document.createElement("article");
   card.className = "friend-card";
@@ -1691,10 +1808,37 @@ function friendCard(friend: FriendCard, pending: "out" | null) {
   const text = document.createElement("span");
   const name = document.createElement("b");
   name.textContent = friend.name;
-  const meta = document.createElement("small");
-  meta.textContent = pending === "out" ? "pedido enviado" : friend.friendCode;
-  text.append(name, meta);
+  if (pending === "out") {
+    const meta = document.createElement("small");
+    meta.textContent = "pedido enviado";
+    text.append(name, meta);
+  } else {
+    const meta = document.createElement("span");
+    meta.className = "friend-meta";
+    const call = document.createElement("button");
+    call.type = "button";
+    call.className = "friend-call";
+    const plus = document.createElement("i");
+    plus.setAttribute("aria-hidden", "true");
+    call.append(plus, document.createTextNode("Convidar"));
+    call.addEventListener("click", () => void callFriend(friend));
+    meta.append(call);
+    if (friend.inviteExpiresAt !== null && friend.inviteExpiresAt > Date.now()) {
+      const chip = document.createElement("span");
+      chip.className = "invite-chip";
+      chip.dataset.expires = String(friend.inviteExpiresAt);
+      chip.textContent = "Convite enviado";
+      meta.append(chip);
+    }
+    text.append(name, meta);
+  }
+  text.append(friendStatus(friend.status));
   who.append(text);
+  const side = document.createElement("div");
+  side.className = "friend-side";
+  if (friend.device) side.append(deviceIcon(friend.device));
+  if (pending !== "out") side.append(friendOptions(friend));
+  if (side.childElementCount) who.append(side);
   const actions = document.createElement("div");
   actions.className = "friend-actions";
   if (pending === "out") {
@@ -1703,25 +1847,15 @@ function friendCard(friend: FriendCard, pending: "out" | null) {
     cancel.textContent = "Cancelar";
     cancel.addEventListener("click", () => void changeFriend(() => removeFriend(friend.id), "Pedido cancelado."));
     actions.append(cancel);
-  } else {
-    who.append(friendOptions(friend));
-    const call = document.createElement("button");
-    call.type = "button";
-    call.className = "friend-call";
-    const plus = document.createElement("i");
-    plus.setAttribute("aria-hidden", "true");
-    call.append(plus, document.createTextNode("Convidar"));
-    call.addEventListener("click", () => void callFriend(friend));
-    actions.append(call);
-    if (friend.roomCode) {
-      const join = document.createElement("button");
-      join.type = "button";
-      join.textContent = `Sala ${friend.roomCode}`;
-      join.addEventListener("click", () => joinCode(friend.roomCode!));
-      actions.append(join);
-    }
+  } else if (friend.roomCode) {
+    const join = document.createElement("button");
+    join.type = "button";
+    join.textContent = `Sala ${friend.roomCode}`;
+    join.addEventListener("click", () => joinCode(friend.roomCode!));
+    actions.append(join);
   }
-  card.append(who, actions);
+  card.append(who);
+  if (actions.childElementCount) card.append(actions);
   return card;
 }
 
@@ -1798,6 +1932,7 @@ async function callFriend(friend: FriendCard) {
     }
     await inviteFriend(friend.id);
     setBanner(`Convite enviado para ${friend.name}.`);
+    await paintFriends();
   } catch (error) {
     if (error instanceof AccountError && error.status === 401) {
       account = null;
@@ -1898,9 +2033,22 @@ function setBusy(card: HTMLElement | null, busy: boolean) {
   for (const button of card.querySelectorAll("button")) button.disabled = busy;
 }
 
-function syncList<T extends { id: string }>(list: HTMLElement, items: T[], render: (item: T) => HTMLElement) {
+function syncList<T extends { id: string }>(
+  list: HTMLElement,
+  items: T[],
+  render: (item: T) => HTMLElement,
+  patch?: (card: HTMLElement, item: T) => void,
+) {
   const ids = new Set(items.map((item) => item.id));
-  for (const item of items) list.append(cardById(list, item.id) ?? render(item));
+  for (const item of items) {
+    const have = cardById(list, item.id);
+    if (have) {
+      patch?.(have, item);
+      list.append(have);
+    } else {
+      list.append(render(item));
+    }
+  }
   for (const node of [...list.children]) {
     if (node instanceof HTMLElement && !ids.has(node.dataset.id ?? "")) node.remove();
   }
@@ -1912,6 +2060,7 @@ function syncInviteVisibility() {
   roomInvitesBox.hidden = roomEmpty;
   friendInvitesBox.hidden = friendEmpty;
   invitesSection.hidden = roomEmpty && friendEmpty;
+  if (!roomEmpty || !friendEmpty) foldFriends.open = true;
 }
 
 function inviteClock(ms: number): string {
@@ -1921,8 +2070,15 @@ function inviteClock(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function pendingChips(): HTMLElement[] {
+  return [...friendList.querySelectorAll<HTMLElement>(".invite-chip")];
+}
+
 function paintInviteMeters() {
   const now = Date.now();
+  for (const chip of pendingChips()) {
+    if (Number(chip.dataset.expires) <= now) chip.remove();
+  }
   for (const card of [...roomInviteList.querySelectorAll<HTMLElement>(".invite-card")]) {
     const expires = Number(card.dataset.expires);
     const created = Number(card.dataset.created);
@@ -1937,7 +2093,7 @@ function paintInviteMeters() {
       card.remove();
     }
   }
-  if (roomInviteList.childElementCount === 0) {
+  if (roomInviteList.childElementCount === 0 && pendingChips().length === 0) {
     window.clearInterval(inviteTick);
     inviteTick = 0;
   }
@@ -1946,8 +2102,15 @@ function paintInviteMeters() {
 
 function ensureInviteTick() {
   paintInviteMeters();
-  if (inviteTick || roomInviteList.childElementCount === 0) return;
+  if (inviteTick || (roomInviteList.childElementCount === 0 && pendingChips().length === 0)) return;
   inviteTick = window.setInterval(paintInviteMeters, 250);
+}
+
+function patchRoomInvite(card: HTMLElement, invite: RoomInvite) {
+  card.dataset.created = String(invite.createdAt);
+  card.dataset.expires = String(invite.expiresAt);
+  const meta = card.querySelector(".invite-copy small");
+  if (meta) meta.textContent = `Sala ${invite.roomCode}`;
 }
 
 function inviteActions(onYes: () => void, onNo: () => void) {
@@ -2123,7 +2286,7 @@ async function pullInvites() {
   }
   const now = Date.now();
   const open = invites.filter((item) => item.expiresAt > now && !goneInvites.has(item.id));
-  syncList(roomInviteList, open, roomInviteCard);
+  syncList(roomInviteList, open, roomInviteCard, patchRoomInvite);
   ensureInviteTick();
 }
 
@@ -2143,7 +2306,7 @@ async function changeFriend(action: () => Promise<void>, done: string) {
 
 function friendSignature(lists: FriendLists): string {
   const part = (items: FriendCard[], tag: string) => items.map((item) => (
-    `${tag}:${item.id}:${item.name}:${item.roomCode ?? ""}:${item.hasAvatar ? 1 : 0}`
+    `${tag}:${item.id}:${item.name}:${item.roomCode ?? ""}:${item.hasAvatar ? 1 : 0}:${item.status}:${item.device ?? ""}:${item.inviteExpiresAt ?? ""}`
   )).join("|");
   return `${part(lists.incoming, "in")}\n${part(lists.outgoing, "out")}\n${part(lists.friends, "ok")}`;
 }
@@ -2190,14 +2353,47 @@ async function paintFriends() {
   }
   syncList(friendInviteList, lists.incoming, friendInviteCard);
   syncInviteVisibility();
+  ensureInviteTick();
 }
 
-accountCode.addEventListener("click", () => {
+copyCode.addEventListener("click", () => {
   const code = account?.friendCode;
   if (!code) return;
   const done = () => setBanner("Código de amigo copiado.");
   if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(code).then(done, done);
   else done();
+});
+
+myStatus.addEventListener("click", () => {
+  myStatus.hidden = true;
+  myStatusPick.hidden = false;
+  myStatusPick.value = myMode;
+  myStatusPick.focus();
+});
+
+myStatusPick.addEventListener("change", () => {
+  const value = myStatusPick.value;
+  myMode = value === "away" || value === "offline" ? value : "auto";
+  if (account) account.presence = myMode;
+  paintMyStatus();
+  closeStatusPick(true);
+  void postPresence({ mode: myMode }).catch((error) => {
+    setBanner(error instanceof Error ? error.message : "Não deu para mudar o status.");
+  });
+});
+
+myStatusPick.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  event.preventDefault();
+  event.stopPropagation();
+  closeStatusPick(true);
+});
+
+myStatusPick.addEventListener("blur", () => {
+  window.setTimeout(() => {
+    if (document.activeElement === myStatusPick || myStatusPick.hidden) return;
+    closeStatusPick();
+  }, 0);
 });
 
 logoutButton.addEventListener("click", () => {
@@ -2372,7 +2568,9 @@ function setRoom(open: boolean) {
 }
 
 roomOpen.addEventListener("click", () => setRoom(true));
-roomClose.addEventListener("click", () => {
+roomClose.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
   setRoom(false);
   roomOpen.focus();
 });
@@ -2924,6 +3122,7 @@ function pump() {
   const bits = padsNow[0] | padsNow[1] | (supers[0] ? 1 << 14 : 0) | (supers[1] ? 1 << 15 : 0);
   const fresh = bits & ~heldControls;
   heldControls = bits;
+  if (fresh) noteActivity();
   if (fresh && composing()) leaveComposer();
   const fight = loadedGame?.id === "final-fight-3";
   writePads(fight ? padsNow[0] & ~X : padsNow[0], fight ? padsNow[1] & ~X : padsNow[1]);
@@ -2948,6 +3147,20 @@ renderGames();
 renderPeople();
 requestAnimationFrame(pump);
 startTour();
+document.addEventListener("pointerdown", noteActivity, { capture: true });
+document.addEventListener("keydown", noteActivity, { capture: true });
+window.addEventListener("touchstart", noteActivity, { capture: true, passive: true });
+document.addEventListener("visibilitychange", () => {
+  if (!account || document.visibilityState !== "visible") return;
+  void beat(Date.now() - lastInput < IDLE_MS ? "active" : "live");
+});
+window.addEventListener("pagehide", () => {
+  if (!account) return;
+  void postPresence({ beat: "gone" });
+});
+window.matchMedia("(max-width: 720px)").addEventListener("change", () => {
+  if (account) paintMyDevice();
+});
 
 booting = (async () => {
   try {

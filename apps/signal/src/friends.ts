@@ -2,6 +2,7 @@ import { FRIEND_CODE, ROOM_CODE, randomHex } from "./codes";
 import type { Env } from "./env";
 import { json, problem } from "./http";
 import { poke, pokeAll } from "./inbox";
+import { deviceKind, presenceMode, presenceStatus, type DeviceKind, type PresenceStatus } from "./presence";
 import type { UserRow } from "./users";
 
 const ROOM_TTL = 8 * 60 * 60 * 1000;
@@ -15,6 +16,10 @@ interface LinkRow {
   avatar: string | null;
   room_code: string | null;
   room_at: number | null;
+  seen_at: number | null;
+  live_at: number | null;
+  presence: string | null;
+  device: string | null;
   status: string;
   from_id: string;
 }
@@ -25,6 +30,9 @@ export interface PublicFriend {
   friendCode: string;
   roomCode: string | null;
   hasAvatar: boolean;
+  status: PresenceStatus;
+  device: DeviceKind | null;
+  inviteExpiresAt: number | null;
 }
 
 function liveRoom(code: string | null, at: number | null): string | null {
@@ -33,13 +41,17 @@ function liveRoom(code: string | null, at: number | null): string | null {
   return code;
 }
 
-function present(row: LinkRow, room: boolean): PublicFriend {
+function present(row: LinkRow, room: boolean, inviteExpiresAt: number | null): PublicFriend {
+  const status = presenceStatus(row.presence, row.seen_at, row.live_at);
   return {
     id: row.id,
     name: row.name,
     friendCode: row.friend_code,
     roomCode: room ? liveRoom(row.room_code, row.room_at) : null,
     hasAvatar: Boolean(row.avatar),
+    status,
+    device: status === "offline" ? null : deviceKind(row.device),
+    inviteExpiresAt,
   };
 }
 
@@ -52,19 +64,37 @@ export async function listFriends(env: Env, user: UserRow): Promise<Response> {
        u.avatar AS avatar,
        u.room_code AS room_code,
        u.room_at AS room_at,
+       u.seen_at AS seen_at,
+       u.live_at AS live_at,
+       u.presence AS presence,
+       u.device AS device,
        f.status AS status,
        f.from_id AS from_id
      FROM friendships f
      JOIN users u ON u.id = CASE WHEN f.from_id = ? THEN f.to_id ELSE f.from_id END
      WHERE f.from_id = ? OR f.to_id = ?`,
   ).bind(user.id, user.id, user.id, user.id).all<LinkRow>();
+  const now = Date.now();
+  const room = liveRoom(user.room_code, user.room_at);
+  const sent = await env.DB.prepare(
+    "SELECT to_id, created_at, room_code FROM room_invites WHERE from_id = ? AND created_at >= ?",
+  ).bind(user.id, now - INVITE_TTL).all<{ to_id: string; created_at: number; room_code: string }>();
+  const pendingInvite = new Map<string, number>();
+  if (room) {
+    for (const invite of sent.results ?? []) {
+      if (invite.room_code !== room) continue;
+      const expires = invite.created_at + INVITE_TTL;
+      const prev = pendingInvite.get(invite.to_id);
+      if (prev === undefined || expires > prev) pendingInvite.set(invite.to_id, expires);
+    }
+  }
   const friends: PublicFriend[] = [];
   const incoming: PublicFriend[] = [];
   const outgoing: PublicFriend[] = [];
   for (const row of rows.results ?? []) {
-    if (row.status === "accepted") friends.push(present(row, true));
-    else if (row.status === "pending" && row.from_id === user.id) outgoing.push(present(row, false));
-    else if (row.status === "pending") incoming.push(present(row, false));
+    if (row.status === "accepted") friends.push(present(row, true, pendingInvite.get(row.id) ?? null));
+    else if (row.status === "pending" && row.from_id === user.id) outgoing.push(present(row, false, null));
+    else if (row.status === "pending") incoming.push(present(row, false, null));
   }
   return json({ friends, incoming, outgoing });
 }
@@ -155,6 +185,62 @@ export async function clearOpenRoom(env: Env, user: UserRow): Promise<Response> 
   return json({ ok: true });
 }
 
+export async function pokeListeners(env: Env, userId: string): Promise<void> {
+  await pokeAll(env, await listeners(env, userId));
+}
+
+interface PresenceRow {
+  seen_at: number | null;
+  live_at: number | null;
+  presence: string | null;
+  device: string | null;
+}
+
+export async function setPresence(request: Request, env: Env, user: UserRow): Promise<Response> {
+  let body: { beat?: unknown; mode?: unknown; device?: unknown };
+  try {
+    body = await request.json() as { beat?: unknown; mode?: unknown; device?: unknown };
+  } catch {
+    return problem("Presença inválida.", 400);
+  }
+  const before = await env.DB.prepare(
+    "SELECT seen_at, live_at, presence, device FROM users WHERE id = ?",
+  ).bind(user.id).first<PresenceRow>();
+  const device = body.device === "phone" || body.device === "desktop" ? body.device : null;
+  if (body.mode !== undefined) {
+    if (body.mode !== "auto" && body.mode !== "away" && body.mode !== "offline") return problem("Presença inválida.", 400);
+    const mode = body.mode === "auto" ? null : body.mode;
+    await env.DB.prepare("UPDATE users SET presence = ? WHERE id = ?").bind(mode, user.id).run();
+  }
+  if (body.beat !== undefined) {
+    if (body.beat !== "active" && body.beat !== "live" && body.beat !== "gone") return problem("Presença inválida.", 400);
+    const now = Date.now();
+    if (body.beat === "gone") {
+      await env.DB.prepare("UPDATE users SET live_at = NULL WHERE id = ?").bind(user.id).run();
+    } else if (body.beat === "active") {
+      await env.DB.prepare("UPDATE users SET seen_at = ?, live_at = ?, device = COALESCE(?, device) WHERE id = ?")
+        .bind(now, now, device, user.id).run();
+    } else {
+      await env.DB.prepare("UPDATE users SET live_at = ?, device = COALESCE(?, device) WHERE id = ?")
+        .bind(now, device, user.id).run();
+    }
+  }
+  if (body.mode === undefined && body.beat === undefined) return problem("Presença inválida.", 400);
+  const after = await env.DB.prepare(
+    "SELECT seen_at, live_at, presence, device FROM users WHERE id = ?",
+  ).bind(user.id).first<PresenceRow>();
+  const oldStatus = presenceStatus(before?.presence ?? null, before?.seen_at ?? null, before?.live_at ?? null);
+  const nextStatus = presenceStatus(after?.presence ?? null, after?.seen_at ?? null, after?.live_at ?? null);
+  const oldDevice = oldStatus === "offline" ? null : deviceKind(before?.device ?? null);
+  const nextDevice = nextStatus === "offline" ? null : deviceKind(after?.device ?? null);
+  if (oldStatus !== nextStatus || oldDevice !== nextDevice) await pokeListeners(env, user.id);
+  return json({
+    status: nextStatus,
+    mode: presenceMode(after?.presence ?? null),
+    device: deviceKind(after?.device ?? null),
+  });
+}
+
 async function listeners(env: Env, userId: string): Promise<string[]> {
   const friends = await env.DB.prepare(
     `SELECT CASE WHEN from_id = ? THEN to_id ELSE from_id END AS id
@@ -181,12 +267,24 @@ export async function inviteToRoom(env: Env, user: UserRow, otherId: string): Pr
   if (!room) return problem("Crie a sala antes de chamar alguém.", 409);
   if (!await acceptedFriend(env, user.id, otherId)) return problem("Essa pessoa não está na sua lista.", 404);
   const now = Date.now();
-  await env.DB.prepare("DELETE FROM room_invites WHERE from_id = ? AND to_id = ?").bind(user.id, otherId).run();
-  await env.DB.prepare(
-    "INSERT INTO room_invites (id, from_id, to_id, room_code, created_at) VALUES (?, ?, ?, ?, ?)",
-  ).bind(randomHex(16), user.id, otherId, room, now).run();
+  const rows = await env.DB.prepare(
+    "SELECT id, created_at FROM room_invites WHERE from_id = ? AND to_id = ? ORDER BY created_at DESC",
+  ).bind(user.id, otherId).all<{ id: string; created_at: number }>();
+  const open = (rows.results ?? []).find((row) => now - row.created_at < INVITE_TTL);
+  if (open) {
+    await env.DB.prepare("UPDATE room_invites SET created_at = ?, room_code = ? WHERE id = ?")
+      .bind(now, room, open.id).run();
+    for (const extra of rows.results ?? []) {
+      if (extra.id !== open.id) await env.DB.prepare("DELETE FROM room_invites WHERE id = ?").bind(extra.id).run();
+    }
+  } else {
+    await env.DB.prepare("DELETE FROM room_invites WHERE from_id = ? AND to_id = ?").bind(user.id, otherId).run();
+    await env.DB.prepare(
+      "INSERT INTO room_invites (id, from_id, to_id, room_code, created_at) VALUES (?, ?, ?, ?, ?)",
+    ).bind(randomHex(16), user.id, otherId, room, now).run();
+  }
   await poke(env, otherId);
-  return json({ ok: true }, 201);
+  return json({ ok: true, expiresAt: now + INVITE_TTL }, open ? 200 : 201);
 }
 
 interface InviteRow {

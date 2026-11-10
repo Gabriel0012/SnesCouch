@@ -7,6 +7,10 @@ CREATE TABLE IF NOT EXISTS users (
   friend_code TEXT NOT NULL UNIQUE,
   room_code TEXT,
   room_at INTEGER,
+  seen_at INTEGER,
+  live_at INTEGER,
+  presence TEXT,
+  device TEXT,
   created_at INTEGER NOT NULL,
   UNIQUE(provider, provider_id)
 );

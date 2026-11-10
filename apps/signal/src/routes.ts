@@ -9,13 +9,16 @@ import {
   inviteToRoom,
   listFriends,
   listInvites,
+  pokeListeners,
   removeFriend,
   requestFriend,
   setOpenRoom,
+  setPresence,
   sharesAvatar,
 } from "./friends";
 import { json, problem, text } from "./http";
 import { getSave, getShot, listSaves, putSave, putShot } from "./saves";
+import { presenceMode } from "./presence";
 import { deleteSession, userFromRequest, type UserRow } from "./users";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -28,6 +31,7 @@ function publicUser(user: UserRow) {
     provider,
     friendCode: user.friend_code,
     hasAvatar: Boolean(user.avatar),
+    presence: presenceMode(user.presence),
   };
 }
 
@@ -74,6 +78,7 @@ export async function routeAccount(request: Request, env: Env): Promise<Response
     const user = await requireUser(request, env);
     if (user instanceof Response) return user;
     await deleteSession(env, request, user.id);
+    await pokeListeners(env, user.id);
     return json({ ok: true }, 200, [clearSessionCookie(request)]);
   }
 
@@ -81,6 +86,12 @@ export async function routeAccount(request: Request, env: Env): Promise<Response
     const user = await requireUser(request, env);
     if (user instanceof Response) return user;
     return proxyAvatar(user.avatar);
+  }
+
+  if (path === "/api/me/presence" && request.method === "POST") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    return setPresence(request, env, user);
   }
 
   if (path === "/api/me/room" && request.method === "POST") {
