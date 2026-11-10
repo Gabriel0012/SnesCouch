@@ -814,9 +814,36 @@ let saveDialog: SaveDialog | null = null;
 let chatTimer = 0;
 let peeking = false;
 let peekedMessage = false;
+let touchChrome = false;
 
 function composing() {
   return document.activeElement === chatInput;
+}
+
+function chatDocked() {
+  return touchChrome && !picture.hidden && !chatInput.disabled;
+}
+
+function syncChatDock() {
+  const dock = chatDocked();
+  playChat.classList.toggle("docked", dock);
+  if (!dock) return;
+  playChat.hidden = false;
+  if (!peeking) chatForm.hidden = false;
+}
+
+function setTouchChrome(open: boolean) {
+  touchChrome = open;
+  if (chatDocked() || (composing() && !picture.hidden && !chatInput.disabled)) {
+    playChat.classList.add("docked");
+    playChat.hidden = false;
+    if (!peeking) chatForm.hidden = false;
+    return;
+  }
+  playChat.classList.remove("docked");
+  if (peeking || chatTimer) return;
+  chatForm.hidden = true;
+  playChat.hidden = true;
 }
 
 function bumpChat() {
@@ -831,8 +858,9 @@ function bumpChat() {
 function showOverlay(mode: "flash" | "history" | "compose") {
   if (picture.hidden || chatInput.disabled) return;
   playChat.hidden = false;
-  const writing = mode === "compose" || composing();
-  chatForm.hidden = mode === "history" ? true : !writing;
+  const dock = chatDocked();
+  const writing = mode === "compose" || composing() || dock;
+  chatForm.hidden = mode === "history" && !dock ? true : !writing;
   if (mode === "history") {
     window.clearTimeout(chatTimer);
     return;
@@ -844,8 +872,19 @@ function hideOverlay() {
   peeking = false;
   peekedMessage = false;
   window.clearTimeout(chatTimer);
+  if (chatDocked()) {
+    playChat.hidden = false;
+    chatForm.hidden = false;
+    playChat.classList.add("docked");
+    if (composing()) {
+      chatInput.blur();
+      localTyping(false);
+    }
+    return;
+  }
   chatForm.hidden = true;
   playChat.hidden = true;
+  playChat.classList.remove("docked");
   if (composing()) {
     chatInput.blur();
     localTyping(false);
@@ -873,6 +912,11 @@ function releaseHistory() {
     return;
   }
   window.clearTimeout(chatTimer);
+  if (chatDocked()) {
+    chatForm.hidden = false;
+    playChat.hidden = false;
+    return;
+  }
   chatForm.hidden = true;
   playChat.hidden = true;
 }
@@ -887,7 +931,7 @@ function leaveComposer() {
   if (!composing()) return;
   window.clearTimeout(typingIdle);
   localTyping(false);
-  chatForm.hidden = true;
+  if (!chatDocked()) chatForm.hidden = true;
   chatInput.blur();
 }
 
@@ -933,7 +977,12 @@ function pushChat(line: ChatLine, live = false) {
 function setChatEnabled(on: boolean) {
   chatInput.disabled = !on;
   chatInput.placeholder = on ? "Escreve para a sala" : "A conversa abre na sala";
-  if (!on) hideOverlay();
+  if (!on) {
+    playChat.classList.remove("docked");
+    hideOverlay();
+    return;
+  }
+  syncChatDock();
 }
 
 function setRoomCode(code: string | null) {
@@ -1597,6 +1646,7 @@ function paintVolume() {
   speaker.setVolume(audible / 100);
   for (const slider of document.querySelectorAll<HTMLInputElement>("[data-volume]")) {
     slider.value = String(volume);
+    slider.parentElement?.style.setProperty("--value", String(volume));
   }
   for (const readout of document.querySelectorAll<HTMLElement>("[data-vol-readout]")) {
     readout.textContent = quiet ? "Mudo" : `${volume}%`;
@@ -2697,14 +2747,17 @@ confirmNo.addEventListener("click", () => {
 });
 
 chatInput.addEventListener("keydown", (event) => {
-  if (event.code !== "Enter" || event.repeat || event.shiftKey) return;
+  if (event.key !== "Enter" || event.repeat || event.shiftKey || event.isComposing) return;
   event.preventDefault();
+  event.stopPropagation();
   chatForm.requestSubmit();
 });
 
 chatInput.addEventListener("blur", () => {
   window.clearTimeout(typingIdle);
   localTyping(false);
+  if (chatDocked()) return;
+  playChat.classList.remove("docked");
   chatForm.hidden = true;
 });
 
@@ -2858,9 +2911,27 @@ document.addEventListener("pointerdown", (event) => {
   setPlayMenu(false);
 });
 
+const stageModals = ["#banner", "#library-edit", "#alert", "#saves-modal", "#manual"].map((selector) => {
+  const node = document.querySelector<HTMLElement>(selector)!;
+  return { node, parent: node.parentElement!, next: node.nextSibling };
+});
+
+function placeStageModals(on: boolean) {
+  for (const modal of stageModals) {
+    if (on) stage.append(modal.node);
+    else modal.parent.insertBefore(modal.node, modal.next);
+  }
+}
+
 document.addEventListener("fullscreenchange", () => {
-  stage.classList.toggle("play-full", document.fullscreenElement === stage && coarsePointer());
-  if (!document.fullscreenElement) {
+  const on = document.fullscreenElement === stage;
+  const coarse = coarsePointer();
+  stage.classList.toggle("play-full", on && coarse);
+  stage.classList.toggle("fs-dock", on && !coarse);
+  placeStageModals(on);
+  const focused = document.activeElement;
+  if (on && focused instanceof HTMLElement && focused.closest("#screen-dock")) focused.blur();
+  if (!on) {
     unlockOrientation();
     setPlayMenu(false);
   }
@@ -2872,6 +2943,7 @@ startTouch({
   overlay: document.querySelector<HTMLElement>("#touch")!,
   setBits: setTouchBits,
   onExit: () => void leaveFullscreen(),
+  onChrome: setTouchChrome,
 });
 
 const alertBox = document.querySelector<HTMLElement>("#alert")!;
@@ -3013,12 +3085,20 @@ libraryName.addEventListener("keydown", (event) => {
   void saveLibraryEdit();
 });
 
-document.querySelector("#close-play")!.addEventListener("click", () => {
+function closePlay() {
   if (!loadedGame) return;
   if (session) leaveRoom();
   stopPlay("welcome");
   setBanner("");
-});
+}
+
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-close-play]")) {
+  button.addEventListener("click", () => {
+    setPlayMenu(false);
+    closePlay();
+    void leaveFullscreen();
+  });
+}
 
 document.querySelector("#forget")!.addEventListener("click", () => {
   if (alertMode) return;

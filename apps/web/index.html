@@ -43,9 +43,7 @@
           <div id="welcome" class="welcome" hidden>
             <p>Escolha um jogo e divirta-se!</p>
           </div>
-          <button id="manual-open" type="button">Manual</button>
           <div id="picture" hidden>
-            <button id="close-play" type="button" aria-label="Fechar jogo">×</button>
             <div id="glass">
               <canvas id="screen" width="256" height="224" hidden></canvas>
               <canvas id="crt" aria-hidden="true"></canvas>
@@ -56,7 +54,6 @@
                 <input id="chat-text" maxlength="200" placeholder="Escreve para a sala" disabled />
               </form>
             </div>
-            <div id="room-host" hidden></div>
             <div id="confirm" hidden>
               <p id="confirm-text"></p>
               <div class="row">
@@ -65,8 +62,11 @@
               </div>
             </div>
           </div>
+          <div id="room-host" hidden></div>
         </div>
         </div>
+        <div id="screen-dock">
+          <div class="screen-dock-bar">
         <div class="toolbar arrive">
           <div class="cluster" role="group" aria-label="Tamanho da tela">
             <button type="button" data-zoom="fit" class="on">Ajustar</button>
@@ -77,6 +77,7 @@
               <img src="/crt.png" alt="" width="28" height="28">
             </button>
             <button id="fullscreen" type="button" aria-label="Tela cheia"></button>
+            <button id="close-play" class="close-play" type="button" data-close-play><b aria-hidden="true">×</b>Fechar jogo</button>
           </div>
           <div class="cluster" role="group" aria-label="Enquadramento">
             <button type="button" data-frame="fit" class="on">Fit</button>
@@ -92,7 +93,9 @@
               </svg>
             </button>
             <div class="volume-pop">
-              <input id="vol-slider" data-volume type="range" min="0" max="100" value="100" aria-label="Volume do jogo" />
+              <span class="vol-range">
+                <input id="vol-slider" data-volume type="range" min="0" max="100" value="100" aria-label="Volume do jogo" />
+              </span>
               <span id="vol-readout" data-vol-readout>100%</span>
             </div>
           </div>
@@ -104,29 +107,14 @@
         </div>
         <div class="saves-line arrive">
           <button id="saves-open" type="button">Saves</button>
+          <button id="manual-open" type="button">Manual</button>
+        </div>
+          </div>
         </div>
         <div id="touch" hidden>
-          <button id="touch-exit" type="button" tabindex="-1">Sair</button>
           <button type="button" class="shoulder left" data-bit="l" tabindex="-1">L</button>
-          <button type="button" class="shoulder right" data-bit="r" tabindex="-1">R</button>
-          <div id="dpad" role="group" aria-label="Direcional">
-            <i class="arrow up"></i>
-            <i class="arrow right"></i>
-            <i class="arrow down"></i>
-            <i class="arrow left"></i>
-          </div>
-          <div class="menu-pad">
-            <button type="button" data-bit="select" tabindex="-1">Select</button>
-            <button type="button" data-bit="start" tabindex="-1">Start</button>
-          </div>
-          <div class="face" role="group" aria-label="Botões">
-            <button type="button" data-bit="x" tabindex="-1">X</button>
-            <button type="button" data-bit="y" tabindex="-1">Y</button>
-            <button type="button" data-bit="a" tabindex="-1">A</button>
-            <button type="button" data-bit="b" tabindex="-1">B</button>
-          </div>
-        </div>
-        <div id="play-menu">
+          <div class="touch-top">
+            <div id="play-menu">
           <div id="play-menu-panel" hidden>
             <div class="cluster" role="group" aria-label="Tamanho da tela">
               <button type="button" data-zoom="fit" class="on">Ajustar</button>
@@ -147,16 +135,40 @@
                   <path class="cross" d="M16 9.5l5 5M21 9.5l-5 5" />
                 </svg>
               </button>
-              <input data-volume type="range" min="0" max="100" value="100" aria-label="Volume do jogo" />
+              <span class="vol-range">
+                <input data-volume type="range" min="0" max="100" value="100" aria-label="Volume do jogo" />
+              </span>
               <span data-vol-readout>100%</span>
             </div>
             <button type="button" data-crt aria-pressed="false" aria-label="Filtro CRT">
               <img src="/crt.png" alt="" width="28" height="28">
             </button>
+            <button class="close-play" type="button" data-close-play><b aria-hidden="true">×</b>Fechar jogo</button>
           </div>
           <button id="play-menu-open" type="button" aria-label="Opções" aria-expanded="false" aria-controls="play-menu-panel">
             <span></span><span></span><span></span>
           </button>
+            </div>
+            <button id="touch-exit" type="button" tabindex="-1" aria-label="Sair da tela cheia"></button>
+          </div>
+          <button type="button" class="shoulder right" data-bit="r" tabindex="-1">R</button>
+          <div id="dpad" role="group" aria-label="Direcional">
+            <i class="arm up"></i>
+            <i class="arm right"></i>
+            <i class="arm down"></i>
+            <i class="arm left"></i>
+            <i class="nub"></i>
+          </div>
+          <div class="menu-pad">
+            <button type="button" data-bit="select" tabindex="-1">Select</button>
+            <button type="button" data-bit="start" tabindex="-1">Start</button>
+          </div>
+          <div class="face" role="group" aria-label="Botões">
+            <button type="button" data-bit="x" tabindex="-1">X</button>
+            <button type="button" data-bit="y" tabindex="-1">Y</button>
+            <button type="button" data-bit="a" tabindex="-1">A</button>
+            <button type="button" data-bit="b" tabindex="-1">B</button>
+          </div>
         </div>
       </section>
       <aside id="panel" class="arrive">

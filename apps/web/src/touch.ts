@@ -43,6 +43,25 @@ export function dpadBits(dx: number, dy: number, dead: number): number {
   return SECTORS[((index % 8) + 8) % 8] ?? 0;
 }
 
+/**
+ * Direction for the cross pad. x and y run from -1 to 1, origin at the center.
+ * The whole arm counts, not only the outer tip.
+ */
+export function crossBits(x: number, y: number): number {
+  const arm = 0.5;
+  const ax = Math.abs(x);
+  const ay = Math.abs(y);
+  if (ax > 1 || ay > 1) return 0;
+  const onV = ax <= arm;
+  const onH = ay <= arm;
+  if (onV || onH) {
+    if (ax < 0.1 && ay < 0.1) return 0;
+    if (onV && (!onH || ay >= ax)) return y < 0 ? UP : DOWN;
+    return x < 0 ? LEFT : RIGHT;
+  }
+  return dpadBits(x, y, 0.2);
+}
+
 interface Hold {
   bits: number;
   dpad: HTMLElement | null;
@@ -53,8 +72,9 @@ export function startTouch(opts: {
   overlay: HTMLElement;
   setBits: (bits: number) => void;
   onExit: () => void;
+  onChrome?: (open: boolean) => void;
 }) {
-  const { stage, overlay, setBits, onExit } = opts;
+  const { stage, overlay, setBits, onExit, onChrome } = opts;
   const dpad = overlay.querySelector<HTMLElement>("#dpad");
   const exit = overlay.querySelector<HTMLButtonElement>("#touch-exit");
   const held = new Map<number, Hold>();
@@ -83,9 +103,17 @@ export function startTouch(opts: {
     if (held.size > 0) window.clearTimeout(timer);
   }
 
+  function reveal() {
+    if (!overlay.hidden) return;
+    overlay.hidden = false;
+    onChrome?.(true);
+  }
+
   function hide() {
     window.clearTimeout(timer);
+    if (overlay.hidden) return;
     overlay.hidden = true;
+    onChrome?.(false);
   }
 
   function arm() {
@@ -97,9 +125,9 @@ export function startTouch(opts: {
 
   function direction(pad: HTMLElement, event: PointerEvent): number {
     const rect = pad.getBoundingClientRect();
-    const dx = event.clientX - (rect.left + rect.width / 2);
-    const dy = event.clientY - (rect.top + rect.height / 2);
-    return dpadBits(dx, dy, Math.min(rect.width, rect.height) * 0.18);
+    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = ((event.clientY - rect.top) / rect.height) * 2 - 1;
+    return crossBits(x, y);
   }
 
   function releaseAll() {
@@ -110,9 +138,9 @@ export function startTouch(opts: {
   stage.addEventListener("pointerdown", (event) => {
     if (!playing() || !overlay.hidden) return;
     const target = event.target;
-    if (target instanceof Element && target.closest("button, a, input, label, #confirm, #play-menu")) return;
+    if (target instanceof Element && target.closest("button, a, input, label, #confirm, #play-menu, #banner, #library-edit, #alert, #saves-modal, #manual")) return;
     event.preventDefault();
-    overlay.hidden = false;
+    reveal();
   });
 
   stage.addEventListener("pointerup", () => {
@@ -126,6 +154,7 @@ export function startTouch(opts: {
   overlay.addEventListener("pointerdown", (event) => {
     if (!playing() || overlay.hidden || event.button !== 0) return;
     const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest("#play-menu")) return;
     const exitHit = !!target?.closest("#touch-exit");
     const pad = target?.closest("#dpad");
     const button = pad ? null : target?.closest<HTMLElement>("[data-bit]");

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { dpadBits } from "../apps/web/src/touch.ts";
+import { crossBits, dpadBits } from "../apps/web/src/touch.ts";
 
 const UP = 1 << 4;
 const DOWN = 1 << 5;
@@ -22,6 +22,19 @@ test("o direcional virtual cobre os quatro eixos e as quatro diagonais", () => {
   assert.equal(dpadBits(-10, 10, 1), DOWN | LEFT);
   assert.equal(dpadBits(-10, -10, 1), UP | LEFT);
   assert.equal(dpadBits(10, -10, 1), UP | RIGHT);
+});
+
+test("a cruz inteira aperta a direção, não só a ponta", () => {
+  assert.equal(crossBits(0, -0.9), UP);
+  assert.equal(crossBits(0, -0.35), UP);
+  assert.equal(crossBits(0.15, -0.4), UP);
+  assert.equal(crossBits(0, 0.9), DOWN);
+  assert.equal(crossBits(0, 0.35), DOWN);
+  assert.equal(crossBits(-0.9, 0), LEFT);
+  assert.equal(crossBits(-0.35, 0.1), LEFT);
+  assert.equal(crossBits(0.9, 0), RIGHT);
+  assert.equal(crossBits(0.4, -0.12), RIGHT);
+  assert.equal(crossBits(0, 0), 0);
 });
 
 test("o direcional virtual não junta opostos", () => {
