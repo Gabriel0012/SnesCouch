@@ -229,7 +229,9 @@ function fighterByte(byte: number): (Fighter | "guy") | null {
   return null;
 }
 
-function readFighterByte(port: 0 | 1): number | null {
+/** Online, the local pad and its macro are always port 0, but the fighter in RAM is the player's real slot. */
+function readFighterByte(macroPort: 0 | 1): number | null {
+  const port = mode === "net" && lockstep ? lockstep.localSlot : macroPort;
   const state = saveState();
   if (!state) return null;
   const ram = blockStart(state, "RAM", 0x20000);

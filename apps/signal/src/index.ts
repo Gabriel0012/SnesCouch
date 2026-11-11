@@ -59,23 +59,12 @@ export default {
     if (match) {
       if (!ROOM_CODE.test(match[1])) return new Response("Código inválido.", { status: 400, headers: headers() });
       const id = env.ROOMS.idFromName(match[1]);
-      const room = env.ROOMS.get(id, roomPlacement(request));
+      const room = env.ROOMS.get(id);
       return room.fetch(request);
     }
     return serveAsset(request, env);
   },
 };
-
-/**
- * When the direct link between players does not open, every button goes
- * through the room, so it should sit near them. Without a hint, rooms opened
- * from Brazil can land in the US. The hint only
- * counts the first time a room id is created; later requests reuse that spot.
- */
-function roomPlacement(request: Request): DurableObjectNamespaceGetDurableObjectOptions | undefined {
-  const continent = (request.cf as { continent?: string } | undefined)?.continent;
-  return continent === "SA" ? { locationHint: "sam" } : undefined;
-}
 
 async function live(request: Request, env: Env): Promise<Response> {
   let user;

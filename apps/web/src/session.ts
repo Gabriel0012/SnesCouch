@@ -499,7 +499,11 @@ export class OnlineSession {
     return this.relay({ bin: bytesToBase64(new Uint8Array(buf)) });
   }
 
-  /** Buttons and ping take the direct link when it is open; everything else stays on the room socket, in order. */
+  /**
+   * Ping takes the direct link when it is open. Buttons go both ways (see
+   * flushInputs): a link that dies quietly keeps reporting open for seconds.
+   * Everything else stays on the room socket, in order.
+   */
   private sendFast(message: unknown, direct = true) {
     const text = JSON.stringify(message);
     if (direct && this.link?.send(text)) return;
@@ -875,7 +879,8 @@ export class OnlineSession {
       .sort((a, b) => a[0] - b[0])
       .map(([frame, buttons]) => ({ frame, buttons }));
     const packet = encodeInputs(frames, { slot: this.slot, base: this.base });
-    if (!this.link?.send(packet)) this.relayBytes(packet);
+    this.link?.send(packet);
+    this.relayBytes(packet);
   }
 
   private sendJson(message: unknown) {

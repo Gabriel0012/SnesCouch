@@ -44,7 +44,7 @@ export class DirectLink {
   constructor(private opts: DirectOptions) {}
 
   get open(): boolean {
-    return this.up && this.channel?.readyState === "open";
+    return this.up && this.channel?.readyState === "open" && this.pc?.connectionState !== "disconnected";
   }
 
   start() {
