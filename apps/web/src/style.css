@@ -193,29 +193,28 @@ header .lede { color: var(--header-dim); margin: 0; }
 #banner {
   position: fixed;
   z-index: 40;
-  top: 0;
+  top: var(--header-h, 3.5rem);
   left: 0;
   right: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin: 0;
-  padding: 0.55rem 1rem;
-  background: var(--a);
-  color: #fff8f4;
-  border-bottom: 4px solid var(--ink);
+  width: 200px;
+  margin: 0 auto;
+  padding: 0.5rem 0.65rem;
+  background: var(--banner-bg, #34529a);
+  color: var(--banner-ink, #f4f7ff);
+  border: 3px solid var(--ink);
+  box-shadow: 3px 3px 0 #000;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
 }
-#banner-close {
-  flex: none;
-  background: transparent;
-  color: inherit;
-  box-shadow: none;
-  padding: 0 0.2rem;
-  font-size: 1.35rem;
-  line-height: 1;
-}
-#banner-close:active { transform: none; box-shadow: none; }
+:fullscreen #banner { top: 0.75rem; }
+/* As cores dos botões do SNES, menos saturadas para o texto ler bem. */
+#banner[data-tone="warn"] { --banner-bg: #c9a43a; --banner-ink: #12141a; }
+#banner[data-tone="error"] { --banner-bg: #8e3b36; --banner-ink: #fff8f4; }
+#banner[data-tone="info"] { --banner-bg: #34529a; --banner-ink: #f4f7ff; }
+#banner[data-tone="success"] { --banner-bg: #2f6b45; --banner-ink: #f2fbf5; }
 
 .shell {
   display: grid;
@@ -2107,12 +2106,10 @@ button.status-line:active { transform: none; box-shadow: none; }
   content: "";
   position: absolute;
   left: 0;
-  right: 0;
+  right: 2.4rem;
   top: 50%;
-  height: 3px;
   translate: 0 -50%;
-  background: repeating-linear-gradient(90deg, var(--muted) 0 3px, transparent 3px 6px);
-  image-rendering: pixelated;
+  border-top: 1px dashed #dedede;
 }
 .swap-btn {
   position: absolute;
@@ -2125,11 +2122,14 @@ button.status-line:active { transform: none; box-shadow: none; }
   padding: 0;
   display: grid;
   place-items: center;
-  background: var(--well);
-  color: var(--gold);
-  box-shadow: inset -3px -3px 0 var(--sink), inset 3px 3px 0 var(--lift), 3px 3px 0 #000;
+  background: var(--edge);
+  color: var(--dot);
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
 }
-.swap-btn:active { box-shadow: inset -3px -3px 0 var(--sink), inset 3px 3px 0 var(--lift); }
+.swap-btn:hover { color: var(--muted); }
+.swap-btn:active { transform: none; box-shadow: none; }
 .swap-btn[hidden] { display: none; }
 .people li[data-seat] { position: relative; }
 .swap-btn::before {
@@ -2417,7 +2417,6 @@ header.arrive { animation: in-up calc(var(--tick) * 5) steps(5, end) both; }
 #panel.arrive { animation: in-left calc(var(--tick) * 5) steps(5, end) both; animation-delay: 0.05s; }
 footer.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; animation-delay: 0.08s; }
 .game.arrive { animation: in-right calc(var(--tick) * 5) steps(5, end) both; }
-.people li.arrive,
 #delay.arrive,
 .saves button.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; }
 
@@ -2696,7 +2695,7 @@ footer.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; ani
 @media (prefers-reduced-motion: reduce) {
   .step-in, .step-out,
   header.arrive, #viewport.arrive, .toolbar.arrive,
-  #panel.arrive, footer.arrive, .game.arrive, .people li.arrive,
+  #panel.arrive, footer.arrive, .game.arrive,
   #delay.arrive, .saves button.arrive,
   #manual.step-in.move-modal .manual-card,
   #manual.step-out.move-modal .manual-card,

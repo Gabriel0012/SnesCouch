@@ -297,15 +297,24 @@ let booting: Promise<void> = Promise.resolve();
 
 let bannerTimer = 0;
 
-function setBanner(text: string) {
+/** Cores do controle do SNES: amarelo alerta, vermelho erro, azul informa, verde sucesso. */
+type BannerTone = "warn" | "error" | "info" | "success";
+
+function clearBanner() {
   window.clearTimeout(bannerTimer);
+  conceal(banner, "up");
+}
+
+function setBanner(text: string, tone: BannerTone) {
   if (text.length === 0) {
-    conceal(banner, "up");
+    clearBanner();
     return;
   }
+  window.clearTimeout(bannerTimer);
   bannerText.textContent = text;
+  banner.dataset.tone = tone;
   reveal(banner, "up", true);
-  bannerTimer = window.setTimeout(() => setBanner(""), 5000);
+  bannerTimer = window.setTimeout(clearBanner, 5000);
 }
 
 function setDelay(text: string) {
@@ -608,7 +617,7 @@ async function openStored(game: Game) {
       ready.delete(game.id);
       if (selected.id === game.id) selected = localGame;
       await refreshLibrary();
-      setBanner("A ROM gravada não parece de Super Nintendo. Solta o arquivo de novo.");
+      setBanner("A ROM gravada não parece de Super Nintendo. Solta o arquivo de novo.", "error");
       return;
     }
     await boot(game, record.bytes);
@@ -619,7 +628,7 @@ async function openStored(game: Game) {
     await forgetRom(game.id);
     ready.delete(game.id);
     renderGames();
-    setBanner("A ROM gravada não confere mais. Solta o arquivo de novo.");
+    setBanner("A ROM gravada não confere mais. Solta o arquivo de novo.", "error");
     return;
   }
   await boot(matched.game, matched.rom);
@@ -630,7 +639,7 @@ async function keepCatalog(game: Game, rom: Uint8Array) {
     await saveRom(game.id, game.sha1, rom);
     ready.add(game.id);
   } catch {
-    setBanner("A ROM abriu, mas não ficou gravada neste navegador.");
+    setBanner("A ROM abriu, mas não ficou gravada neste navegador.", "warn");
   }
   shelfTab = "online";
   paintTabs();
@@ -646,7 +655,7 @@ async function keepLibrary(bytes: Uint8Array, sha1: string, fileName: string) {
     ready.add(id);
     await refreshLibrary();
   } catch {
-    setBanner("A ROM abriu, mas não ficou gravada neste navegador.");
+    setBanner("A ROM abriu, mas não ficou gravada neste navegador.", "warn");
   }
   const game = library.find((entry) => entry.id === id) ?? {
     id,
@@ -664,20 +673,20 @@ async function keepLibrary(bytes: Uint8Array, sha1: string, fileName: string) {
 
 async function openFile(file: File) {
   if (!crossOriginIsolated) {
-    setBanner("O navegador não isolou a página. Abre pelo servidor do projeto, com os cabeçalhos COOP e COEP.");
+    setBanner("O navegador não isolou a página. Abre pelo servidor do projeto, com os cabeçalhos COOP e COEP.", "error");
     return;
   }
-  setBanner("Conferindo o arquivo…");
+  setBanner("Conferindo o arquivo…", "info");
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (plainGame()) {
     if (!looksLikeSnesRom(bytes.length)) {
-      setBanner("Esse arquivo não parece uma ROM de Super Nintendo. Nada foi enviado.");
+      setBanner("Esse arquivo não parece uma ROM de Super Nintendo. Nada foi enviado.", "error");
       return;
     }
     const matched = await matchRom(bytes);
     if (matched) {
       await keepCatalog(matched.game, matched.rom);
-      setBanner(`${matched.game.title} entrou nos jogos online.`);
+      setBanner(`${matched.game.title} entrou nos jogos online.`, "success");
       return;
     }
     await keepLibrary(bytes, await sha1Of(bytes), file.name);
@@ -685,9 +694,8 @@ async function openFile(file: File) {
   }
   const matched = await matchRom(bytes);
   if (!matched || matched.game.id !== selected.id) {
-    setBanner(matched
-      ? `Esse arquivo é ${matched.game.title}. Escolhe esse jogo na lista, ou solta a ROM de ${selected.title}.`
-      : "Esse arquivo não é a versão USA esperada. Nada foi enviado.");
+    if (matched) setBanner(`Esse arquivo é ${matched.game.title}. Escolhe esse jogo na lista, ou solta a ROM de ${selected.title}.`, "warn");
+    else setBanner("Esse arquivo não é a versão USA esperada. Nada foi enviado.", "error");
     return;
   }
   await keepCatalog(matched.game, matched.rom);
@@ -695,7 +703,7 @@ async function openFile(file: File) {
 
 async function boot(game: Game, rom: Uint8Array) {
   if (!crossOriginIsolated) {
-    setBanner("O navegador não isolou a página. Abre pelo servidor do projeto, com os cabeçalhos COOP e COEP.");
+    setBanner("O navegador não isolou a página. Abre pelo servidor do projeto, com os cabeçalhos COOP e COEP.", "error");
     return;
   }
   if (loadedGame?.id === game.id && worker) {
@@ -712,7 +720,7 @@ async function boot(game: Game, rom: Uint8Array) {
   conceal(drop, "down");
   conceal(welcome, "down");
   reveal(picture, "down");
-  setBanner("");
+  clearBanner();
   roomState.textContent = playingLine(game);
   renderGames();
   await renderSaves();
@@ -737,7 +745,7 @@ function kickReset(net: ResetNet) {
   window.clearTimeout(resetTimer);
   resetNet = net;
   if (!romBytes || !loadedGame) {
-    setBanner("Solte a ROM antes de reiniciar.");
+    setBanner("Solte a ROM antes de reiniciar.", "warn");
     return;
   }
   if (!worker || relaunching) {
@@ -746,7 +754,7 @@ function kickReset(net: ResetNet) {
   }
   worker.postMessage(net ? { t: "reset", slot: net.slot, delay: net.delay } : { t: "reset" });
   resetTimer = window.setTimeout(() => relaunch(net), 700);
-  setBanner(net ? "Jogo reiniciado nos dois." : "Jogo reiniciado.");
+  setBanner(net ? "Jogo reiniciado nos dois." : "Jogo reiniciado.", "success");
 }
 
 function relaunch(net: ResetNet) {
@@ -761,7 +769,7 @@ function relaunch(net: ResetNet) {
   if (transferred) replaceScreen();
   startWorker(rom, plainGame(game) ? null : net, plainGame(game));
   loadedGame = game;
-  setBanner(net ? "Jogo reiniciado nos dois." : "Jogo reiniciado.");
+  setBanner(net ? "Jogo reiniciado nos dois." : "Jogo reiniciado.", "success");
 }
 
 function onWorker(message: {
@@ -831,14 +839,14 @@ function onWorker(message: {
     saveWait?.({ state: new Uint8Array(message.state), shot: message.shot ? new Uint8Array(message.shot) : null });
     saveWait = null;
   }
-  if (message.t === "restored") setBanner("Save carregado.");
+  if (message.t === "restored") setBanner("Save carregado.", "success");
   if (message.t === "error") {
     if (message.message === "O núcleo não aceitou essa ROM." && loadedGame && isLibraryGame(loadedGame)) {
       void dropRejectedLocal();
       return;
     }
     if (message.message === "Não deu para reiniciar o jogo." && !relaunching) relaunch(resetNet);
-    else setBanner(message.message ?? "Falha no núcleo.");
+    else setBanner(message.message ?? "Falha no núcleo.", "error");
   }
 }
 
@@ -847,7 +855,7 @@ function compare(frame: number) {
   if (localChecks.get(frame) !== remoteChecks.get(frame)) {
     worker?.postMessage({ t: "stop" });
     session?.close();
-    setBanner("A partida dessincronizou e foi encerrada. Cria a sala de novo.");
+    setBanner("A partida dessincronizou e foi encerrada. Cria a sala de novo.", "error");
   }
 }
 
@@ -1264,13 +1272,9 @@ function kickButton(id: string, name: string) {
   return button;
 }
 
-function playerLine(seat: string, name: string, control: string, state: string, index: number, animate: boolean, slot: 0 | 1, kickId = "") {
+function playerLine(seat: string, name: string, control: string, state: string, slot: 0 | 1, kickId = "") {
   const item = document.createElement("li");
   item.dataset.seat = seat;
-  if (animate) {
-    item.classList.add("arrive");
-    item.style.animationDelay = `${index * 40}ms`;
-  }
   const kind = kindFromLabel(control);
   if (kind) item.append(padIcon(kind));
   const chip = document.createElement("span");
@@ -1322,26 +1326,57 @@ swapButton.addEventListener("click", () => askSwap());
 swapItem.append(swapButton);
 
 let localSwap = false;
-let peoplePaints = 0;
 
-function seatRows(animate: boolean): [HTMLLIElement, HTMLLIElement] {
+interface Lineup {
+  room: boolean;
+  slots: string;
+  present: number;
+}
+
+let lineup: Lineup | null = null;
+let fadingOut = false;
+
+function hostSlotNow(): 0 | 1 {
+  if (!session || !roster) return 0;
+  const mine = session.playSlot();
+  if (session.role === "host") return mine;
+  if (session.role === "guest") return mine === 0 ? 1 : 0;
+  return roster.hostSlot;
+}
+
+function currentLineup(): Lineup {
+  if (!session || !roster) return { room: false, slots: `local:${localSwap}`, present: 2 };
+  const present = Number(session.role === "host" || roster.host.here) + Number(session.role === "guest" || roster.guest.here);
+  return { room: true, slots: `sala:${hostSlotNow()}`, present };
+}
+
+/** Animate only on the first paint, a swap, or someone arriving; any other update repaints in place. */
+function lineupChanged(next: Lineup): boolean {
+  const prev = lineup;
+  lineup = next;
+  if (!prev) return true;
+  if (!prev.room && next.room) return true;
+  if (prev.room !== next.room) return false;
+  return prev.slots !== next.slots || next.present > prev.present;
+}
+
+function seatRows(): [HTMLLIElement, HTMLLIElement] {
   if (!session || !roster) {
     const [first, second] = padStatus();
     const slotA: 0 | 1 = localSwap ? 1 : 0;
     const slotB: 0 | 1 = localSwap ? 0 : 1;
-    const a = playerLine("a", roomName() || `Jogador ${slotA + 1}`, first ?? "Teclado", "nesta máquina", slotA, animate, slotA);
-    const b = playerLine("b", `Jogador ${slotB + 1}`, second ?? "Teclado", "nesta máquina", slotB, animate, slotB);
+    const a = playerLine("a", roomName() || `Jogador ${slotA + 1}`, first ?? "Teclado", "nesta máquina", slotA);
+    const b = playerLine("b", `Jogador ${slotB + 1}`, second ?? "Teclado", "nesta máquina", slotB);
     return localSwap ? [b, a] : [a, b];
   }
   const you = session.role;
-  const mine = session.playSlot();
-  const hostSlot: 0 | 1 = you === "host" ? mine : you === "guest" ? (mine === 0 ? 1 : 0) : roster.hostSlot;
+  const hostSlot = hostSlotNow();
   const guestKick = you === "host" && roster.guest.here && roster.guest.id ? roster.guest.id : "";
   const seats = [
     { id: "host", slot: hostSlot, seat: roster.host, mine: you === "host", fallback: "Anfitrião", absent: "saiu", kick: "" },
     { id: "guest", slot: (hostSlot === 0 ? 1 : 0) as 0 | 1, seat: roster.guest, mine: you === "guest", fallback: "Convidado", absent: "aguardando", kick: guestKick },
   ].sort((a, b) => a.slot - b.slot);
-  const [top, bottom] = seats.map((row, index) => {
+  const [top, bottom] = seats.map((row) => {
     const present = row.mine || row.seat.here;
     const state = row.mine ? "você" : row.seat.here ? "na sala" : row.absent;
     return playerLine(
@@ -1349,8 +1384,6 @@ function seatRows(animate: boolean): [HTMLLIElement, HTMLLIElement] {
       row.seat.name || row.fallback,
       present ? row.seat.control || "Teclado" : "—",
       state,
-      index,
-      animate,
       row.slot,
       row.kick,
     );
@@ -1367,35 +1400,32 @@ function renderPeople() {
   if (key === peopleKey) return;
   peopleKey = key;
   renderWatchers();
-  const animate = peoplePaints >= 2;
-  peoplePaints += 1;
-  const before = new Map<string, number>();
-  for (const row of people.querySelectorAll<HTMLElement>("li[data-seat]")) {
-    before.set(row.dataset.seat ?? "", row.getBoundingClientRect().top);
+  const fade = lineupChanged(currentLineup()) && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (fadingOut) return;
+  const old = [...people.querySelectorAll<HTMLElement>("li[data-seat]")];
+  if (!fade || old.length === 0) {
+    paintSeats(fade);
+    return;
   }
-  const [top, bottom] = seatRows(animate);
+  fadingOut = true;
+  const outs = old.map((row) => row.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: "ease-in", fill: "forwards" }));
+  void Promise.all(outs.map((anim) => anim.finished)).catch(() => undefined).then(() => {
+    fadingOut = false;
+    paintSeats(true);
+  });
+}
+
+/** Reads the seats when it runs, so updates that land during the fade-out show up in this paint. */
+function paintSeats(fade: boolean) {
+  const rows = seatRows();
   for (const child of [...people.children]) {
     if (child !== swapItem) child.remove();
   }
   if (swapItem.parentElement !== people) people.append(swapItem);
-  people.insertBefore(top, swapItem);
-  people.append(bottom);
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  for (const [row, lift] of [[top, -1], [bottom, 1]] as const) {
-    const was = before.get(row.dataset.seat ?? "");
-    if (was === undefined) continue;
-    const dy = was - row.getBoundingClientRect().top;
-    if (Math.abs(dy) < 1) continue;
-    row.classList.remove("arrive");
-    row.style.animationDelay = "";
-    const side = lift * 10;
-    row.animate([
-      { transform: `translate(0, ${dy}px)`, zIndex: 2 },
-      { transform: `translate(${side}px, ${dy}px) scale(1.06)`, filter: "drop-shadow(4px 4px 0 #000)", zIndex: 2, offset: 0.25 },
-      { transform: `translate(${side}px, 0) scale(1.06)`, filter: "drop-shadow(4px 4px 0 #000)", zIndex: 2, offset: 0.75 },
-      { transform: "translate(0, 0)", zIndex: 2 },
-    ], { duration: 560, easing: "ease-in-out" });
-  }
+  people.insertBefore(rows[0], swapItem);
+  people.append(rows[1]);
+  if (!fade) return;
+  for (const row of rows) row.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease-out" });
 }
 
 function when(ms: number) {
@@ -1551,7 +1581,7 @@ async function slotsFor(game: Game) {
       account = null;
       paintAccount();
     }
-    setBanner(error instanceof Error ? error.message : "A nuvem não respondeu.");
+    setBanner(error instanceof Error ? error.message : "A nuvem não respondeu.", "error");
     return saveList(game.id);
   }
 }
@@ -1588,7 +1618,7 @@ async function syncSaves(game: Game) {
 
 async function openSaves() {
   if (!loadedGame || !worker) {
-    setBanner("Solte a ROM antes de abrir os saves.");
+    setBanner("Solte a ROM antes de abrir os saves.", "warn");
     return;
   }
   paintSlots(loadedGame, await slotsFor(loadedGame));
@@ -1616,19 +1646,19 @@ async function writeSlot(game: Game, slot: number) {
       }
     }
     const shotNote = saved.shot ? "com o print da tela" : "sem o print da tela";
-    if (cloud) setBanner(`Save ${slot} gravado na conta, ${shotNote}.`);
-    else if (account && cloudSaves) setBanner(`Save ${slot} gravado neste navegador. A nuvem não respondeu.`);
-    else setBanner(`Save ${slot} gravado, ${shotNote}.`);
+    if (cloud) setBanner(`Save ${slot} gravado na conta, ${shotNote}.`, "success");
+    else if (account && cloudSaves) setBanner(`Save ${slot} gravado neste navegador. A nuvem não respondeu.`, "warn");
+    else setBanner(`Save ${slot} gravado, ${shotNote}.`, "success");
     await renderSaves();
   } catch (error) {
-    setBanner(error instanceof Error ? error.message : "Não deu para gravar o save.");
+    setBanner(error instanceof Error ? error.message : "Não deu para gravar o save.", "error");
   }
 }
 
 async function downloadSlot(game: Game, slot: number, savedAt: number, shot: Uint8Array | null) {
   const state = await loadState(game.id, slot);
   if (!state) {
-    setBanner("Esse save não está mais neste navegador.");
+    setBanner("Esse save não está mais neste navegador.", "error");
     await renderSaves();
     return;
   }
@@ -1644,36 +1674,36 @@ function pickImport(slot: number) {
 
 async function importSave(game: Game, slot: number, file: File) {
   if (file.size > 12 * 1024 * 1024) {
-    setBanner("Esse arquivo é grande demais para ser um save.");
+    setBanner("Esse arquivo é grande demais para ser um save.", "error");
     return;
   }
   let parsed: ReturnType<typeof decodeSaveFile>;
   try {
     parsed = decodeSaveFile(await file.text());
   } catch {
-    setBanner("Não deu para ler esse arquivo.");
+    setBanner("Não deu para ler esse arquivo.", "error");
     return;
   }
   if (!parsed) {
-    setBanner("Esse arquivo não é um save deste emulador.");
+    setBanner("Esse arquivo não é um save deste emulador.", "error");
     return;
   }
   if (!game.sha1 || parsed.sha1 !== game.sha1) {
-    setBanner(parsed.title ? `Esse save é de ${parsed.title}.` : "Esse save é de outra ROM.");
+    setBanner(parsed.title ? `Esse save é de ${parsed.title}.` : "Esse save é de outra ROM.", "error");
     return;
   }
   const taken = (await saveList(game.id)).some((item) => item.slot === slot);
   if (taken) {
-    setBanner(`O slot ${slot} já tem um save.`);
+    setBanner(`O slot ${slot} já tem um save.`, "warn");
     await renderSaves();
     return;
   }
   try {
     await saveState(game.id, slot, parsed.state, parsed.shot, "local", parsed.savedAt);
-    setBanner(`Save ${slot} importado.`);
+    setBanner(`Save ${slot} importado.`, "success");
     await renderSaves();
   } catch (error) {
-    setBanner(error instanceof Error ? error.message : "Não deu para importar o save.");
+    setBanner(error instanceof Error ? error.message : "Não deu para importar o save.", "error");
   }
 }
 
@@ -1697,7 +1727,7 @@ function hideConfirm() {
 async function readSlot(game: Game, slot: number, savedAt: number) {
   if (!worker || loadedGame?.id !== game.id) return;
   if (watchingRoom()) {
-    setBanner("Quem assiste não carrega save na partida.");
+    setBanner("Quem assiste não carrega save na partida.", "warn");
     return;
   }
   closeSaves(true);
@@ -1709,7 +1739,7 @@ async function readSlot(game: Game, slot: number, savedAt: number) {
     return;
   }
   if (!session.linked()) {
-    setBanner("A partida ainda não ligou.");
+    setBanner("A partida ainda não ligou.", "warn");
     return;
   }
   if (saveDialog) return;
@@ -1727,12 +1757,12 @@ async function dropRejectedLocal() {
   if (selected.id === game.id) selected = localGame;
   await refreshLibrary();
   updateDrop();
-  setBanner("O núcleo não aceitou essa ROM.");
+  setBanner("O núcleo não aceitou essa ROM.", "error");
 }
 
 async function connect(role: Role, code: string) {
   if (plainGame()) {
-    setBanner("Este jogo só roda nesta máquina.");
+    setBanner("Este jogo só roda nesta máquina.", "warn");
     return;
   }
   if (!account) {
@@ -1743,7 +1773,7 @@ async function connect(role: Role, code: string) {
   await booting;
   if (!loadedGame || loadedGame.id !== selected.id) {
     if (!session) roomState.textContent = idleRoom();
-    setBanner("Solte a ROM, ou escolha um jogo que já esteja neste navegador.");
+    setBanner("Solte a ROM, ou escolha um jogo que já esteja neste navegador.", "warn");
     return;
   }
   const previous = session;
@@ -1824,13 +1854,13 @@ async function connect(role: Role, code: string) {
       if (session !== mine || yes) return;
       if (alertMode === "reset-wait" || alertMode === "reset-in") {
         closeAlert();
-        setBanner("O outro jogador cancelou o reinício.");
+        setBanner("O outro jogador cancelou o reinício.", "warn");
       }
     },
     onClose: (reason, closeCode) => {
       if (session !== mine) return;
       if (closeCode === SEAT_TAKEN && role === "guest") {
-        setBanner("O lugar de jogador está ocupado. Você entrou para assistir.");
+        setBanner("O lugar de jogador está ocupado. Você entrou para assistir.", "warn");
         void connect("spectator", code);
         return;
       }
@@ -1849,7 +1879,7 @@ async function connect(role: Role, code: string) {
       worker?.postMessage({ t: "local" });
       dropHostedRoom();
       roomState.textContent = idleRoom();
-      setBanner(reason);
+      setBanner(reason, "error");
     },
     onChat: (line) => {
       pushChat(line, true);
@@ -1878,9 +1908,9 @@ async function connect(role: Role, code: string) {
       peopleKey = "";
       renderPeople();
       if (!manual.hidden) fillManual();
-      setBanner(mine.playSlot() === 0 ? "Você agora é o jogador 1." : "Você agora é o jogador 2.");
+      setBanner(mine.playSlot() === 0 ? "Você agora é o jogador 1." : "Você agora é o jogador 2.", "info");
     },
-    onSwapBusy: () => setBanner("A troca já está indo."),
+    onSwapBusy: () => setBanner("A troca já está indo.", "info"),
     onPing: (ms) => {
       if (ms !== null && session !== mine) return;
       pingMs = ms;
@@ -1891,25 +1921,26 @@ async function connect(role: Role, code: string) {
       if (session !== mine) return;
       pingDirect = on;
       paintPing();
-      setBanner(on ? "Ligação direta com o outro jogador." : "A ligação direta caiu. A partida segue pelo servidor.");
+      if (on) setBanner("Ligação direta com o outro jogador.", "success");
+      else setBanner("A ligação direta caiu. A partida segue pelo servidor.", "warn");
     },
     onSaveAnswer: (id, yes) => {
       if (session !== mine || !saveDialog || saveDialog.kind === "offer" || saveDialog.id !== id) return;
       if (saveDialog.kind === "incoming") {
         if (yes) return;
         hideConfirm();
-        setBanner("O outro jogador cancelou o save.");
+        setBanner("O outro jogador cancelou o save.", "warn");
         return;
       }
       if (saveDialog.kind !== "wait") return;
       const state = saveDialog.state;
       hideConfirm();
       if (!yes) {
-        setBanner("O outro jogador recusou o save.");
+        setBanner("O outro jogador recusou o save.", "warn");
         return;
       }
       mine.acceptSave(state);
-      setBanner("Save carregado nos dois.");
+      setBanner("Save carregado nos dois.", "success");
     },
     checkpoint: askCheckpoint,
   });
@@ -1931,14 +1962,14 @@ async function connect(role: Role, code: string) {
     setChatEnabled(false);
     setRoomCode(null);
     if (account && previousRoom) void queueRoom(null);
-    setBanner(error instanceof Error ? error.message : "Não foi possível abrir a sala.");
+    setBanner(error instanceof Error ? error.message : "Não foi possível abrir a sala.", "error");
     return;
   }
   if (!account) return;
   try {
     await queueRoom(role === "host" ? code : null);
   } catch {
-    setBanner("A sala abriu, mas os amigos não viram o código.");
+    setBanner("A sala abriu, mas os amigos não viram o código.", "warn");
   }
 }
 
@@ -2086,7 +2117,7 @@ function dropHostedRoom() {
 function joinCode(raw: string) {
   const code = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!/^[A-HJ-NP-Z2-9]{5}$/.test(code)) {
-    setBanner("O código tem 5 letras, sem I, O, 0 ou 1.");
+    setBanner("O código tem 5 letras, sem I, O, 0 ou 1.", "warn");
     return;
   }
   codeInput.value = code;
@@ -2170,7 +2201,7 @@ async function refreshAccount() {
   paintAccount();
   const params = new URLSearchParams(location.search);
   if (params.get("login") === "falhou") {
-    setBanner("Não deu para entrar. Tente de novo.");
+    setBanner("Não deu para entrar. Tente de novo.", "error");
     params.delete("login");
     const next = params.toString();
     history.replaceState(null, "", next ? `${location.pathname}?${next}` : location.pathname);
@@ -2399,24 +2430,24 @@ function friendOptions(friend: FriendCard) {
 
 async function callFriend(friend: FriendCard) {
   if (!hostedCode) {
-    setBanner("Crie a sala antes de chamar alguém.");
+    setBanner("Crie a sala antes de chamar alguém.", "warn");
     return;
   }
   try {
     await roomChain;
     if (!hostedCode) {
-      setBanner("Crie a sala antes de chamar alguém.");
+      setBanner("Crie a sala antes de chamar alguém.", "warn");
       return;
     }
     await inviteFriend(friend.id);
-    setBanner(`Convite enviado para ${friend.name}.`);
+    setBanner(`Convite enviado para ${friend.name}.`, "success");
     await paintFriends();
   } catch (error) {
     if (error instanceof AccountError && error.status === 401) {
       account = null;
       paintAccount();
     }
-    setBanner(error instanceof Error ? error.message : "Não deu para chamar.");
+    setBanner(error instanceof Error ? error.message : "Não deu para chamar.", "error");
   }
 }
 
@@ -2696,7 +2727,7 @@ async function takeRoomInvite(invite: RoomInvite) {
       account = null;
       paintAccount();
     }
-    setBanner(error instanceof Error ? error.message : "Não deu para entrar na sala.");
+    setBanner(error instanceof Error ? error.message : "Não deu para entrar na sala.", "error");
   }
 }
 
@@ -2713,7 +2744,7 @@ async function dropRoomInvite(id: string) {
       paintAccount();
       return;
     }
-    setBanner(error instanceof Error ? error.message : "Não deu para recusar.");
+    setBanner(error instanceof Error ? error.message : "Não deu para recusar.", "error");
     void pullInvites();
   }
 }
@@ -2724,7 +2755,7 @@ async function answerFriendInvite(friend: FriendCard, accept: boolean) {
   try {
     if (accept) await acceptFriend(friend.id);
     else await declineFriend(friend.id);
-    setBanner(accept ? "Pedido aceito." : "Pedido recusado.");
+    setBanner(accept ? "Pedido aceito." : "Pedido recusado.", "success");
     friendKey = "";
     await paintFriends();
   } catch (error) {
@@ -2733,7 +2764,7 @@ async function answerFriendInvite(friend: FriendCard, accept: boolean) {
       account = null;
       paintAccount();
     }
-    setBanner(error instanceof Error ? error.message : "Não deu para atualizar os amigos.");
+    setBanner(error instanceof Error ? error.message : "Não deu para atualizar os amigos.", "error");
   }
 }
 
@@ -2771,14 +2802,14 @@ async function pullInvites() {
 async function changeFriend(action: () => Promise<void>, done: string) {
   try {
     await action();
-    setBanner(done);
+    setBanner(done, "success");
     await paintFriends();
   } catch (error) {
     if (error instanceof AccountError && error.status === 401) {
       account = null;
       paintAccount();
     }
-    setBanner(error instanceof Error ? error.message : "Não deu para atualizar os amigos.");
+    setBanner(error instanceof Error ? error.message : "Não deu para atualizar os amigos.", "error");
   }
 }
 
@@ -2837,7 +2868,7 @@ async function paintFriends() {
 copyCode.addEventListener("click", () => {
   const code = account?.friendCode;
   if (!code) return;
-  const done = () => setBanner("Código de amigo copiado.");
+  const done = () => setBanner("Código de amigo copiado.", "success");
   if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(code).then(done, done);
   else done();
 });
@@ -2856,7 +2887,7 @@ myStatusPick.addEventListener("change", () => {
   paintMyStatus();
   closeStatusPick(true);
   void postPresence({ mode: myMode }).catch((error) => {
-    setBanner(error instanceof Error ? error.message : "Não deu para mudar o status.");
+    setBanner(error instanceof Error ? error.message : "Não deu para mudar o status.", "error");
   });
 });
 
@@ -2884,7 +2915,7 @@ logoutButton.addEventListener("click", () => {
     account = null;
     hostedCode = null;
     paintAccount();
-    setBanner("Você saiu da conta. O nome da sala volta a ser o deste navegador.");
+    setBanner("Você saiu da conta. O nome da sala volta a ser o deste navegador.", "info");
   })();
 });
 
@@ -2893,21 +2924,21 @@ friendForm.addEventListener("submit", (event) => {
   const code = friendCodeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
   friendCodeInput.value = code;
   if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code)) {
-    setBanner("O código de amigo tem 6 letras, sem I, O, 0 ou 1.");
+    setBanner("O código de amigo tem 6 letras, sem I, O, 0 ou 1.", "warn");
     return;
   }
   void (async () => {
     try {
       const status = await askFriend(code);
       friendCodeInput.value = "";
-      setBanner(status === "accepted" ? "Pedido aceito." : "Pedido enviado.");
+      setBanner(status === "accepted" ? "Pedido aceito." : "Pedido enviado.", "success");
       await paintFriends();
     } catch (error) {
       if (error instanceof AccountError && error.status === 401) {
         account = null;
         paintAccount();
       }
-      setBanner(error instanceof Error ? error.message : "Não deu para pedir amizade.");
+      setBanner(error instanceof Error ? error.message : "Não deu para pedir amizade.", "error");
     }
   })();
 });
@@ -2949,12 +2980,12 @@ document.querySelector("#create")!.addEventListener("click", () => {
 copyButton.addEventListener("click", () => {
   const code = codeInput.value.trim();
   if (!code) {
-    setBanner("Cria a sala, ou cola um código, antes de copiar.");
+    setBanner("Cria a sala, ou cola um código, antes de copiar.", "warn");
     return;
   }
   const done = () => {
     copyButton.setAttribute("aria-label", "Copiado");
-    setBanner("Código copiado.");
+    setBanner("Código copiado.", "success");
     window.setTimeout(() => copyButton.setAttribute("aria-label", "Copiar"), 1200);
   };
   if (navigator.clipboard?.writeText) {
@@ -3013,7 +3044,7 @@ function leaveRoom() {
   setDelay("");
   dropHostedRoom();
   renderPeople();
-  setBanner("Você saiu da sala.");
+  setBanner("Você saiu da sala.", "info");
 }
 
 leaveButton.addEventListener("click", () => leaveRoom());
@@ -3025,12 +3056,12 @@ function askSwap() {
     return;
   }
   if (!session.requestSwap()) {
-    if (session.linked()) setBanner("A troca já está indo.");
-    else if (session.role === "guest") setBanner("Só o anfitrião troca enquanto o outro lado não está na sala.");
-    else setBanner("A partida ainda não ligou.");
+    if (session.linked()) setBanner("A troca já está indo.", "info");
+    else if (session.role === "guest") setBanner("Só o anfitrião troca enquanto o outro lado não está na sala.", "warn");
+    else setBanner("A partida ainda não ligou.", "warn");
     return;
   }
-  if (session.role === "guest" && session.linked()) setBanner("Pedindo a troca de jogadores…");
+  if (session.role === "guest" && session.linked()) setBanner("Pedindo a troca de jogadores…", "info");
 }
 
 function roomDrawer(): boolean {
@@ -3117,7 +3148,7 @@ confirmYes.addEventListener("click", () => {
   if (saveDialog.kind === "offer") {
     if (!session?.linked()) {
       hideConfirm();
-      setBanner("A partida ainda não ligou.");
+      setBanner("A partida ainda não ligou.", "warn");
       return;
     }
     const id = session.proposeSave(saveDialog.label, saveDialog.state);
@@ -3130,7 +3161,7 @@ confirmYes.addEventListener("click", () => {
     session?.answerSave(saveDialog.id, true);
     session?.acceptSave(state);
     hideConfirm();
-    setBanner("Save carregado nos dois.");
+    setBanner("Save carregado nos dois.", "success");
   }
 });
 
@@ -3288,12 +3319,17 @@ settings.addEventListener("click", (event) => {
   if (event.target === settings) closeSettings();
 });
 
-document.querySelector("#banner-close")!.addEventListener("click", () => setBanner(""));
+banner.addEventListener("click", () => clearBanner());
+
+const pageHeader = document.querySelector<HTMLElement>("body > header")!;
+new ResizeObserver(() => {
+  document.documentElement.style.setProperty("--header-h", `${pageHeader.offsetHeight}px`);
+}).observe(pageHeader);
 
 document.querySelector("#reset")!.addEventListener("click", () => {
   if (watchingRoom()) return;
   if (!worker || !loadedGame) {
-    setBanner("Solte a ROM antes de reiniciar.");
+    setBanner("Solte a ROM antes de reiniciar.", "warn");
     return;
   }
   if (alertMode) return;
@@ -3448,7 +3484,7 @@ function dismissAlert() {
   const mode = alertMode;
   if (mode === "reset-wait") session?.cancelReset();
   if (mode === "reset-in") session?.answerReset(false);
-  if (mode === "reset-wait" || mode === "reset-in") setBanner("Reinício cancelado.");
+  if (mode === "reset-wait" || mode === "reset-in") setBanner("Reinício cancelado.", "info");
   closeAlert();
 }
 
@@ -3498,19 +3534,19 @@ async function saveLibraryEdit() {
   if (!id) return;
   const title = libraryName.value.replace(/\s+/g, " ").trim().slice(0, 40);
   if (!title) {
-    setBanner("O jogo precisa de um nome.");
+    setBanner("O jogo precisa de um nome.", "warn");
     return;
   }
   try {
     await renameRom(id, title);
     if (pendingCover) await setRomCover(id, pendingCover.bytes, pendingCover.type);
   } catch {
-    setBanner("Não deu para guardar o nome ou a capa.");
+    setBanner("Não deu para guardar o nome ou a capa.", "error");
     return;
   }
   closeLibraryEdit();
   await refreshLibrary();
-  setBanner("Jogo atualizado.");
+  setBanner("Jogo atualizado.", "success");
 }
 
 tabOnline.addEventListener("click", () => showTab("online"));
@@ -3521,7 +3557,7 @@ libraryFile.addEventListener("change", () => {
   if (!file) return;
   if (!COVER_TYPES.has(file.type) || file.size > COVER_MAX) {
     libraryFile.value = "";
-    setBanner("A capa precisa ser uma imagem de até 1,5 MB.");
+    setBanner("A capa precisa ser uma imagem de até 1,5 MB.", "warn");
     return;
   }
   void file.arrayBuffer().then((buffer) => {
@@ -3549,7 +3585,7 @@ function closePlay() {
   if (!loadedGame) return;
   if (session) leaveRoom();
   stopPlay("welcome");
-  setBanner("");
+  clearBanner();
 }
 
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-close-play]")) {
@@ -3564,7 +3600,7 @@ document.querySelector("#forget")!.addEventListener("click", () => {
   if (alertMode) return;
   closeSettings(true);
   if (!ready.has(selected.id)) {
-    setBanner("Essa ROM não está neste navegador.");
+    setBanner("Essa ROM não está neste navegador.", "error");
     return;
   }
   openAlert("forget");
@@ -3577,7 +3613,7 @@ alertYes.addEventListener("click", () => {
     closeAlert();
     if (!target || session?.role !== "host") return;
     session.kick(target.id);
-    setBanner(`${target.name} saiu da sala e ficou bloqueado.`);
+    setBanner(`${target.name} saiu da sala e ficou bloqueado.`, "success");
     return;
   }
   if (mode === "drop-slot") {
@@ -3587,10 +3623,10 @@ alertYes.addEventListener("click", () => {
     void (async () => {
       try {
         await forgetSlot(target.gameId, target.slot);
-        setBanner(`Save ${target.slot} apagado deste navegador.`);
+        setBanner(`Save ${target.slot} apagado deste navegador.`, "success");
         await renderSaves();
       } catch (error) {
-        setBanner(error instanceof Error ? error.message : "Não deu para apagar o save.");
+        setBanner(error instanceof Error ? error.message : "Não deu para apagar o save.", "error");
       }
     })();
     return;
@@ -3609,7 +3645,7 @@ alertYes.addEventListener("click", () => {
         await refreshLibrary();
       } else renderGames();
       updateDrop();
-      setBanner(`${game.title} saiu deste navegador.`);
+      setBanner(`${game.title} saiu deste navegador.`, "success");
     })();
     return;
   }
@@ -3621,7 +3657,7 @@ alertYes.addEventListener("click", () => {
   if (mode === "reset-ask") {
     if (!session?.proposeReset()) {
       closeAlert();
-      setBanner("A partida ainda não ligou.");
+      setBanner("A partida ainda não ligou.", "warn");
       return;
     }
     openAlert("reset-wait");
@@ -3660,7 +3696,7 @@ function pollSupers(padsNow: [number, number], pressed: [boolean, boolean]) {
         const next = (FIGHTERS.indexOf(fighters[port]) + 1) % FIGHTERS.length;
         fighters[port] = FIGHTERS[next];
         const player = session?.linked() ? mySlot() + 1 : port + 1;
-        setBanner(`Super do jogador ${player}: ${fighterLabel(fighters[port])}.`);
+        setBanner(`Super do jogador ${player}: ${fighterLabel(fighters[port])}.`, "info");
       } else {
         const forward = padsNow[port] & LEFT ? LEFT : padsNow[port] & RIGHT ? RIGHT : facing[port];
         worker.postMessage({ t: "super", port, steps: superSteps(fighters[port], forward) });
@@ -3731,7 +3767,7 @@ function pump() {
 }
 
 if (!crossOriginIsolated) {
-  setBanner("O navegador não isolou a página. Abre pelo servidor do projeto, com os cabeçalhos COOP e COEP.");
+  setBanner("O navegador não isolou a página. Abre pelo servidor do projeto, com os cabeçalhos COOP e COEP.", "error");
 }
 
 applyZoom();
@@ -3785,6 +3821,6 @@ booting = (async () => {
     renderGames();
     if (game && game.id !== localGame.id && ready.has(game.id)) await openStored(game);
   } catch {
-    setBanner("Não deu para abrir o banco deste navegador. A ROM vale só nesta visita.");
+    setBanner("Não deu para abrir o banco deste navegador. A ROM vale só nesta visita.", "error");
   }
 })();

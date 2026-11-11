@@ -31,3 +31,27 @@ test.describe("jogo aberto", () => {
     expect(new Set(heights).size).toBe(1);
   });
 });
+
+test("o alerta é pequeno, amarelo quando avisa, fica no meio logo abaixo do header e fecha com um clique", async ({ browser }) => {
+  const page = await person(browser, { cid: "play-banner" });
+  const banner = page.locator("#banner");
+  await page.locator("#copy").click();
+  await expect(page.locator("#banner-text")).toHaveText("Cria a sala, ou cola um código, antes de copiar.");
+  await expect(banner).toBeVisible();
+  await expect(banner).toHaveAttribute("data-tone", "warn");
+  await expect(banner).toHaveCSS("background-color", "rgb(201, 164, 58)");
+  await expect(banner.locator("button")).toHaveCount(0);
+  await expect.poll(async () => {
+    const box = await banner.boundingBox();
+    const header = await page.locator("body > header").boundingBox();
+    const width = page.viewportSize()!.width;
+    if (!box || !header) return null;
+    return {
+      width: Math.round(box.width),
+      centered: Math.abs(box.x + box.width / 2 - width / 2) <= 1,
+      underHeader: Math.abs(box.y - header.height) <= 1,
+    };
+  }).toEqual({ width: 200, centered: true, underHeader: true });
+  await banner.click();
+  await expect(banner).toBeHidden();
+});
