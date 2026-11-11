@@ -359,14 +359,16 @@ header .lede { color: var(--header-dim); margin: 0; }
 #stage.play-full #screen-dock { display: none; }
 #stage.play-full { overflow: hidden; }
 #stage.play-full .screen-frame {
-  flex: 1 1 auto;
-  width: 100%;
+  position: absolute;
+  inset: 0;
+  width: auto;
   min-height: 0;
+  align-self: stretch;
 }
 #stage.play-full #viewport {
   flex: 1 1 auto;
   width: 100%;
-  height: auto;
+  height: 100%;
   min-height: 0;
   aspect-ratio: auto;
   align-self: stretch;
@@ -376,20 +378,18 @@ header .lede { color: var(--header-dim); margin: 0; }
 
 #touch[hidden] { display: none !important; }
 #stage.play-full #touch {
+  --pad-t: max(0.45rem, env(safe-area-inset-top));
+  --pad-r: max(0.7rem, env(safe-area-inset-right));
+  --pad-b: max(0.45rem, env(safe-area-inset-bottom));
+  --pad-l: max(0.7rem, env(safe-area-inset-left));
+  --dpad: min(34dvh, 42vw, 9.6rem);
+  --face: min(38dvh, 46vw, 11rem);
+  --touch-alpha: 0.45;
+  --touch-alpha-held: 0.7;
   position: absolute;
   inset: 0;
   z-index: 6;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
-  align-items: end;
-  column-gap: 0.45rem;
-  row-gap: 0.35rem;
-  padding:
-    max(0.45rem, env(safe-area-inset-top))
-    max(0.7rem, env(safe-area-inset-right))
-    max(0.45rem, env(safe-area-inset-bottom))
-    max(0.7rem, env(safe-area-inset-left));
+  display: block;
   pointer-events: none;
   touch-action: none;
   user-select: none;
@@ -409,11 +409,25 @@ header .lede { color: var(--header-dim); margin: 0; }
   -webkit-tap-highlight-color: transparent;
 }
 #touch button:active { transform: none; }
+#touch .shoulder,
+#dpad,
+#touch .menu-pad,
+#touch .face,
+#play-menu-open,
+#touch-exit {
+  opacity: var(--touch-alpha);
+  transition: opacity 0.08s linear;
+}
+#touch .shoulder.held,
+#dpad:is(.held-up, .held-down, .held-left, .held-right),
+#touch .menu-pad:has(.held),
+#touch .face:has(.held) { opacity: var(--touch-alpha-held); }
+#play-menu-open[aria-expanded="true"] { opacity: 1; }
 #touch .touch-top {
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: center;
-  align-self: start;
+  position: absolute;
+  top: var(--pad-t);
+  left: 50%;
+  translate: -50% 0;
   display: flex;
   align-items: flex-start;
   gap: 0.4rem;
@@ -439,28 +453,28 @@ header .lede { color: var(--header-dim); margin: 0; }
 }
 #touch-exit:active { box-shadow: inset 0 0 0 3px #3a3f4a; }
 #touch .shoulder {
+  position: absolute;
+  top: var(--pad-t);
   width: min(26vw, 6.8rem);
   height: 1.65rem;
-  align-self: start;
   border-radius: 0.35rem 0.35rem 0.7rem 0.7rem;
   background: color-mix(in srgb, #d5d8de 78%, transparent);
   color: #1c1e26;
   box-shadow: inset 0 0 0 2px #8d929c, 2px 2px 0 #000;
   font-size: 11px;
 }
-#touch .shoulder.left { grid-column: 1; grid-row: 1; justify-self: start; }
-#touch .shoulder.right { grid-column: 3; grid-row: 1; justify-self: end; }
+#touch .shoulder.left { left: var(--pad-l); }
+#touch .shoulder.right { right: var(--pad-r); }
 #touch .shoulder.held {
   background: color-mix(in srgb, #f6f3ea 92%, transparent);
   color: #1c1e26;
 }
 #dpad {
-  grid-column: 1;
-  grid-row: 2;
-  justify-self: start;
-  position: relative;
-  width: min(34dvh, 42vw, 9.6rem);
-  height: min(34dvh, 42vw, 9.6rem);
+  position: absolute;
+  left: var(--pad-l);
+  bottom: var(--pad-b);
+  width: var(--dpad);
+  height: var(--dpad);
   border-radius: 50%;
   background: color-mix(in srgb, #c8ccd4 74%, transparent);
   box-shadow: inset 0 0 0 3px #8d929c, 4px 4px 0 #000;
@@ -503,13 +517,12 @@ header .lede { color: var(--header-dim); margin: 0; }
 #dpad.held-left .nub,
 #dpad.held-right .nub { background: var(--b); }
 #touch .menu-pad {
-  grid-column: 2;
-  grid-row: 2;
-  justify-self: center;
-  align-self: end;
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--pad-b) + var(--dpad) / 2 - 0.7rem);
+  translate: -50% 0;
   display: flex;
   gap: 0.95rem;
-  margin-bottom: calc(min(34dvh, 42vw, 9.6rem) / 2 - 0.7rem);
 }
 #touch .menu-pad button {
   min-width: 3.5rem;
@@ -528,15 +541,15 @@ header .lede { color: var(--header-dim); margin: 0; }
   color: var(--ink);
 }
 #touch .face {
-  grid-column: 3;
-  grid-row: 2;
-  justify-self: end;
-  width: min(38dvh, 46vw, 11rem);
-  height: min(38dvh, 46vw, 11rem);
+  position: absolute;
+  right: var(--pad-r);
+  bottom: var(--pad-b);
+  width: var(--face);
+  height: var(--face);
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   grid-template-rows: repeat(3, 1fr);
-  padding: 9%;
+  padding: calc(var(--face) * 0.2);
   border-radius: 50%;
   background: radial-gradient(circle at 50% 42%, rgb(90 96 108 / 0.55), rgb(28 30 36 / 0.78) 72%);
   box-shadow: inset 0 0 0 4px rgb(20 22 28 / 0.9), 4px 4px 0 #000;
