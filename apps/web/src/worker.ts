@@ -24,13 +24,13 @@ type Core = {
 };
 
 let core: Core | null = null;
-interface LoadMessage { t: "load"; rom: ArrayBuffer; canvas: OffscreenCanvas; sab: SharedArrayBuffer; net?: { slot: Slot; delay: number }; plain?: boolean; watch?: boolean }
+interface LoadMessage { t: "load"; rom: ArrayBuffer; canvas: OffscreenCanvas; sab: SharedArrayBuffer; net?: { slot: Slot; delay: number }; plain?: boolean; watch?: boolean; probe?: boolean }
 interface NetStart { t: "net-start"; slot: Slot; delay: number }
 interface NetRemote { t: "net-remote"; frames: { frame: number; buttons: number }[] }
 interface NetResume { t: "net-resume"; slot: Slot; delay: number; frame: number; state: ArrayBuffer }
 interface RestoreMessage { t: "restore"; state: ArrayBuffer }
 interface ResetMessage { t: "reset"; slot?: Slot; delay?: number }
-interface Simple { t: "local" | "pause" | "checkpoint" | "stop" | "save" | "net-arm" | "watch-start" | "watch-stop" | "watch-snapshot" | "watch-mode" }
+interface Simple { t: "local" | "pause" | "checkpoint" | "stop" | "save" | "net-arm" | "watch-start" | "watch-stop" | "watch-snapshot" | "watch-mode" | "probe" }
 interface SuperMessage { t: "super"; port: 0 | 1; steps: number[] }
 interface SpecialMessage { t: "special"; port: 0 | 1; held: number; steps: number[] }
 interface WatchLoad { t: "watch-load"; frame: number; state: ArrayBuffer }
@@ -64,6 +64,8 @@ let watchSentAt = 0;
 let watchFrame = -1;
 let watchPrimed = false;
 const watchQueue = new Map<number, [number, number]>();
+let probing = false;
+const probeRing: [number, number][] = [];
 const WATCH_PRIME = 8;
 const WATCH_BEHIND = 30;
 const pendingRemote: { frame: number; buttons: number }[] = [];
@@ -144,6 +146,10 @@ function run(p0: number, p1: number) {
   emitAudio();
   fpsFrames += 1;
   if (watching) watchOut.push(frameNo, p0 & 0xffff, p1 & 0xffff);
+  if (probing) {
+    probeRing.push([frameNo, core._snes_state_hash() >>> 0]);
+    if (probeRing.length > 600) probeRing.shift();
+  }
   frameNo += 1;
 }
 
@@ -380,6 +386,7 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
   const message = event.data;
   if (message.t === "load") {
     canvas = message.canvas;
+    probing = message.probe === true;
     ctx = canvas.getContext("2d", { alpha: false });
     pads = new Uint16Array(message.sab);
     core = await createSnes({ locateFile: (file: string) => (file.endsWith(".wasm") ? wasmUrl : file) }) as Core;
@@ -408,6 +415,10 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
     clearMacros();
     return;
   }
+  if (message.t === "probe") {
+    post({ t: "probe", ring: probeRing.slice() });
+    return;
+  }
   if (message.t === "watch-start") {
     watching = true;
     watchDirty = true;
@@ -431,6 +442,8 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
     if (mode !== "watch") return;
     if (!loadState(new Uint8Array(message.state))) return;
     watchFrame = message.frame;
+    frameNo = message.frame;
+    probeRing.length = 0;
     watchPrimed = false;
     for (const frame of [...watchQueue.keys()]) {
       if (frame < watchFrame) watchQueue.delete(frame);

@@ -208,6 +208,22 @@ const remoteChecks = new Map<number, number>();
 let checkpointWait: ((snapshot: { frame: number; state: Uint8Array; delay: number }) => void) | null = null;
 let saveWait: ((saved: { state: Uint8Array; shot: Uint8Array | null }) => void) | null = null;
 type AlertMode = "forget" | "reset-local" | "reset-ask" | "reset-wait" | "reset-in" | "drop-slot" | "kick";
+const E2E = import.meta.env.VITE_E2E === "1";
+const probeWaits: ((ring: [number, number][]) => void)[] = [];
+
+if (E2E) {
+  (window as unknown as { __snesTest: unknown }).__snesTest = {
+    probe: () => new Promise<[number, number][]>((resolve) => {
+      if (!worker) {
+        resolve([]);
+        return;
+      }
+      probeWaits.push(resolve);
+      worker.postMessage({ t: "probe" });
+    }),
+  };
+}
+
 const CID_KEY = "snes-couch-cid";
 const JOIN_KEY = "snes-couch-join-as";
 type JoinAs = "play" | "watch";
@@ -711,7 +727,7 @@ function startWorker(rom: Uint8Array, net: ResetNet = null, plain = false) {
   worker.onmessage = (event) => onWorker(event.data);
   const copy = rom.slice();
   worker.postMessage(
-    { t: "load", rom: copy.buffer, canvas, sab, plain, ...(net ? { net } : {}) },
+    { t: "load", rom: copy.buffer, canvas, sab, plain, probe: E2E, ...(net ? { net } : {}) },
     [copy.buffer, canvas],
   );
 }
@@ -763,6 +779,11 @@ function onWorker(message: {
 }) {
   if (message.t === "fps" && message.fps !== undefined) {
     if (fpsOn) fpsBadge.textContent = `${Math.round(message.fps)} FPS`;
+    return;
+  }
+  if (message.t === "probe") {
+    const ring = (message as unknown as { ring?: [number, number][] }).ring ?? [];
+    for (const wait of probeWaits.splice(0)) wait(ring);
     return;
   }
   if (message.t === "watch-state" && message.state && message.frame !== undefined) {

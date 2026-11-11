@@ -1,4 +1,4 @@
-import catalog from "../../../packages/catalog/games.json";
+import { catalogGames } from "./catalog";
 import type { Env } from "./index";
 
 type Role = "host" | "guest" | "spectator";
@@ -53,14 +53,15 @@ export class Room implements DurableObject {
     const gameId = url.searchParams.get("game") ?? "";
     const sha1 = (url.searchParams.get("sha1") ?? "").toLowerCase();
     const cid = (url.searchParams.get("cid") ?? "").slice(0, 40);
-    const game = catalog.games.find((entry) => entry.id === gameId);
+    const games = catalogGames(this.env);
+    const game = games.find((entry) => entry.id === gameId);
     if (role !== "host" && role !== "guest" && role !== "spectator") {
       return new Response("Papel inválido.", { status: 400 });
     }
     if (!game || sha1 !== game.sha1) return this.refuse("Jogo ou hash recusado.");
     if (role !== "host" && !this.alive(this.host)) return this.refuse("A sala ainda não existe.");
     if (role !== "host" && (gameId !== this.gameId || sha1 !== this.sha1)) {
-      const roomGame = catalog.games.find((entry) => entry.id === this.gameId);
+      const roomGame = games.find((entry) => entry.id === this.gameId);
       const title = roomGame?.title ?? "outro jogo";
       return this.refuse(`A sala está em ${title}. Abre esse jogo antes de entrar.`);
     }

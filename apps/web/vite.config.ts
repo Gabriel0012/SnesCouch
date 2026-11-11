@@ -1,5 +1,7 @@
 import { defineConfig } from "vite";
 
+const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {};
+
 const isolation = {
   "Cross-Origin-Opener-Policy": "same-origin",
   "Cross-Origin-Embedder-Policy": "require-corp",
@@ -12,7 +14,7 @@ export default defineConfig({
     headers: isolation,
     fs: { allow: ["../.."] },
     proxy: {
-      "/api": { target: "http://127.0.0.1:8787", ws: true },
+      "/api": { target: env.SIGNAL_URL ?? "http://127.0.0.1:8787", ws: true },
     },
   },
   preview: { headers: isolation },

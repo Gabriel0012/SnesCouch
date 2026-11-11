@@ -2,15 +2,23 @@
   "name": "snes-couch",
   "private": true,
   "type": "module",
-  "workspaces": ["apps/web", "apps/signal"],
+  "workspaces": [
+    "apps/web",
+    "apps/signal"
+  ],
   "scripts": {
     "dev": "concurrently -n web,sala -c cyan,yellow \"npm run dev -w @snes-couch/web\" \"npm run dev -w @snes-couch/signal\"",
     "dev:lan": "concurrently -n web,sala -c cyan,yellow \"npm run dev:lan -w @snes-couch/web\" \"npm run dev -w @snes-couch/signal\"",
-    "test": "node --test --test-timeout=120000 packages/net/lockstep.test.ts packages/net/codec.test.ts test/pads.test.ts test/touch.test.ts test/supers.test.ts test/actions.test.ts test/account.test.ts test/presence.test.ts test/save-file.test.ts test/determinism.mjs test/room.mjs",
+    "test": "node --test --test-timeout=120000 packages/net/lockstep.test.ts packages/net/codec.test.ts test/pads.test.ts test/touch.test.ts test/supers.test.ts test/actions.test.ts test/account.test.ts test/presence.test.ts test/save-file.test.ts test/test-game.mjs test/determinism.mjs test/room.mjs",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
+    "e2e:catalog": "node e2e/make-catalog.mjs",
     "build:core": "wsl bash -lc 'source \"$HOME/emsdk/emsdk_env.sh\" && python3 core/build.py'",
     "build": "npm run build -w @snes-couch/web"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@types/node": "^26.6.6",
     "concurrently": "^9.2.1"
   }
 }

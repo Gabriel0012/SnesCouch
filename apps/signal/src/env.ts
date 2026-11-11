@@ -14,4 +14,6 @@ export interface Env {
   GOOGLE_CLIENT_SECRET?: string;
   // Link do botão de café. Fica no .dev.vars e como secret do Worker. Sem valor, o botão some.
   MERCADO_PAGO_URL?: string;
+  // Só os testes E2E ligam ("1"), para aceitar a ROM caseira de teste.
+  E2E?: string;
 }

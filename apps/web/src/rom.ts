@@ -1,4 +1,5 @@
 import catalog from "../../../packages/catalog/games.json";
+import testGame from "../../../packages/catalog/test-game.json";
 
 export const localGame = {
   id: "local",
@@ -21,7 +22,7 @@ export interface LibraryGame {
 
 export type Game = (typeof catalog.games)[number] | typeof localGame | LibraryGame;
 
-export const games: Game[] = catalog.games;
+export const games: Game[] = import.meta.env.VITE_E2E === "1" ? [...catalog.games, testGame] : catalog.games;
 
 export function localRomId(sha1: string): string {
   return `local:${sha1}`;

@@ -7,3 +7,5 @@ local-roms/
 .dev.vars
 *.log
 test/debug-core.mjs
+playwright-report/
+test-results/
