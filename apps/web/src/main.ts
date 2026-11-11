@@ -178,6 +178,7 @@ function storedPing(): boolean {
 
 let pingOn = storedPing();
 let pingMs: number | null = null;
+let pingDirect = false;
 
 type ShelfTab = "online" | "local";
 
@@ -1883,7 +1884,14 @@ async function connect(role: Role, code: string) {
     onPing: (ms) => {
       if (ms !== null && session !== mine) return;
       pingMs = ms;
+      if (ms === null) pingDirect = false;
       paintPing();
+    },
+    onDirect: (on) => {
+      if (session !== mine) return;
+      pingDirect = on;
+      paintPing();
+      setBanner(on ? "Ligação direta com o outro jogador." : "A ligação direta caiu. A partida segue pelo servidor.");
     },
     onSaveAnswer: (id, yes) => {
       if (session !== mine || !saveDialog || saveDialog.kind === "offer" || saveDialog.id !== id) return;
@@ -2031,6 +2039,7 @@ function paintPing() {
   if (pingMs === null) return;
   const ms = Math.round(pingMs);
   pingBadge.textContent = `${ms} ms`;
+  pingBadge.title = pingDirect ? "Ligação direta com o outro jogador" : "Pelo servidor da sala";
   pingBadge.classList.toggle("good", ms <= 80);
   pingBadge.classList.toggle("mid", ms > 80 && ms <= 110);
   pingBadge.classList.toggle("bad", ms > 110);

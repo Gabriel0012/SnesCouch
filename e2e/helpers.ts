@@ -15,6 +15,10 @@ export interface PersonOptions {
   joinAs?: "play" | "watch";
   fps?: boolean;
   ping?: boolean;
+  /** Atraso em ms em cada envio pelo WebSocket da sala, como um servidor longe. */
+  socketLag?: number;
+  /** Navegador sem WebRTC: a partida só tem o servidor da sala. */
+  noDirect?: boolean;
 }
 
 /** Uma pessoa com navegador próprio: localStorage, IndexedDB e cid separados. */
@@ -27,6 +31,15 @@ export async function person(browser: Browser, options: PersonOptions): Promise<
     if (opts.joinAs && !localStorage.getItem("snes-couch-join-as")) localStorage.setItem("snes-couch-join-as", opts.joinAs);
     if (opts.fps && localStorage.getItem("snes-couch-fps") === null) localStorage.setItem("snes-couch-fps", "1");
     if (opts.ping && localStorage.getItem("snes-couch-ping") === null) localStorage.setItem("snes-couch-ping", "1");
+    if (opts.noDirect) Reflect.deleteProperty(window, "RTCPeerConnection");
+    if (opts.socketLag) {
+      const send = WebSocket.prototype.send;
+      WebSocket.prototype.send = function (this: WebSocket, data) {
+        window.setTimeout(() => {
+          if (this.readyState === WebSocket.OPEN) send.call(this, data);
+        }, opts.socketLag);
+      };
+    }
   }, options);
   const page = await context.newPage();
   await page.goto("/");
@@ -63,6 +76,10 @@ export async function leaveRoom(page: Page) {
 
 export async function expectLinked(...pages: Page[]) {
   for (const page of pages) await expect(page.locator("#room-state")).toHaveText("No ar. Os dois estão no mesmo ponto.");
+}
+
+export async function expectDirect(page: Page, on: boolean) {
+  await expect(page.locator("#ping")).toHaveAttribute("title", on ? "Ligação direta com o outro jogador" : "Pelo servidor da sala");
 }
 
 export async function expectWatching(page: Page, code: string) {

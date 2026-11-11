@@ -1,5 +1,6 @@
 import {
   StateAssembler,
+  decodeInputLine,
   decodeInputs,
   decodeSaveChunk,
   decodeStateChunk,
@@ -9,6 +10,7 @@ import {
   type InputFrame,
 } from "../../../packages/net/codec.ts";
 import { delayFromRtt } from "../../../packages/net/lockstep.ts";
+import { DirectLink, type DirectSignal } from "./direct.ts";
 
 export type Role = "host" | "guest" | "spectator";
 
@@ -82,6 +84,7 @@ interface SessionOptions {
   onSwap: (slot: 0 | 1) => void;
   onSwapBusy: () => void;
   onPing: (ms: number | null) => void;
+  onDirect: (on: boolean) => void;
   checkpoint: () => Promise<Snapshot>;
 }
 
@@ -144,6 +147,10 @@ export class OnlineSession {
   private swapBusy = false;
   private swapAsked = false;
   private watchAssembler = new StateAssembler();
+  private link: DirectLink | null = null;
+  private base = 0;
+  private retuneWanted = false;
+  private retuneSamples: number[] = [];
 
   constructor(private opts: SessionOptions) {
     this.slot = opts.role === "host" ? 0 : 1;
@@ -235,6 +242,7 @@ export class OnlineSession {
     this.awaitingSync = false;
     const delay = this.inputDelay();
     this.delay = delay;
+    this.base = 0;
     this.opts.onResume({ frame: 0, state, delay });
   }
 
@@ -333,6 +341,7 @@ export class OnlineSession {
     window.clearInterval(this.pingTimer);
     window.clearInterval(this.resendTimer);
     window.clearTimeout(this.syncTimer);
+    this.stopLink();
     this.ws?.close();
     this.opts.onPing(null);
   }
@@ -394,6 +403,10 @@ export class OnlineSession {
       }
       if (message.t === "peer") this.onPeer();
       if (message.t === "peer-left") this.onPeerLeft();
+      if (message.t === "signal") {
+        const signal = (message as { data?: DirectSignal }).data;
+        if (signal && typeof signal === "object") this.link?.signal(signal);
+      }
       if (message.t === "relay") {
         if (typeof message.bin === "string") {
           try { this.onPlay(base64ToBytes(message.bin)); } catch { /* pedaço inválido */ }
@@ -461,7 +474,7 @@ export class OnlineSession {
     window.clearInterval(this.pingTimer);
     const tick = () => {
       if (this.peerHere) {
-        this.sendJson({ t: "ping", ms: performance.now() });
+        this.sendFast({ t: "ping", ms: performance.now() });
         return;
       }
       if (this.ws?.readyState !== WebSocket.OPEN) return;
@@ -486,9 +499,85 @@ export class OnlineSession {
     return this.relay({ bin: bytesToBase64(new Uint8Array(buf)) });
   }
 
+  /** Buttons and ping take the direct link when it is open; everything else stays on the room socket, in order. */
+  private sendFast(message: unknown, direct = true) {
+    const text = JSON.stringify(message);
+    if (direct && this.link?.send(text)) return;
+    this.relay({ data: text });
+  }
+
+  private startLink() {
+    this.stopLink();
+    if (this.opts.role === "spectator") return;
+    const link: DirectLink = new DirectLink({
+      host: this.opts.role === "host",
+      signal: (data) => this.socketSend({ t: "signal", data }),
+      onOpen: () => {
+        if (this.link === link) this.onLinkChange(true);
+      },
+      onClose: () => {
+        if (this.link === link) this.onLinkChange(false);
+      },
+      onMessage: (data) => {
+        if (this.link === link) this.onPlay(data, true);
+      },
+    });
+    this.link = link;
+    link.start();
+  }
+
+  private stopLink() {
+    const link = this.link;
+    if (!link) return;
+    const wasOpen = link.open;
+    this.link = null;
+    link.stop();
+    this.retuneWanted = false;
+    this.retuneSamples = [];
+    if (wasOpen) this.opts.onDirect(false);
+  }
+
+  private onLinkChange(on: boolean) {
+    this.retuneSamples = [];
+    this.retuneWanted = this.opts.role === "host";
+    this.opts.onDirect(on);
+    this.flushInputs();
+    if (this.peerHere) this.sendFast({ t: "ping", ms: performance.now() });
+  }
+
+  /** The input delay was picked for the old path; once two pings agree on the new one, the host resyncs with it. */
+  private noteRtt(rtt: number) {
+    if (this.opts.role !== "host" || !this.retuneWanted) return;
+    this.retuneSamples = [...this.retuneSamples, rtt].slice(-2);
+    if (this.retuneSamples.length < 2) return;
+    if (!this.linked() || !this.resumed || this.awaitingSync || this.swapBusy || this.resetOffer) return;
+    const delay = delayFromRtt(Math.max(...this.retuneSamples));
+    this.retuneWanted = false;
+    this.retuneSamples = [];
+    if (delay !== this.inputDelay()) this.retune(delay);
+  }
+
+  private retune(delay: number) {
+    this.delay = Math.min(8, Math.max(2, delay));
+    this.epoch += 1;
+    this.outgoing.clear();
+    this.prepareResync();
+    this.sendJson({ t: "retune" });
+    this.opts.onPause();
+    this.opts.onStatus("Ajustando o atraso de input…");
+    void this.pushCheckpoint();
+  }
+
+  private resumeAt(snapshot: Snapshot) {
+    this.base = snapshot.frame;
+    this.outgoing.clear();
+    this.opts.onResume(snapshot);
+  }
+
   private onPeer() {
     if (this.closed) return;
     this.peerHere = true;
+    this.startLink();
     this.awaitingSync = false;
     this.resumed = false;
     this.assembler = new StateAssembler();
@@ -538,6 +627,7 @@ export class OnlineSession {
     this.awaitingSync = false;
     const delay = Math.min(8, Math.max(2, this.delay || 2));
     this.delay = delay;
+    this.base = 0;
     this.sendJson({ t: "reset", n: this.resetGen, delay });
     this.opts.onReset({ slot: this.slot, delay });
   }
@@ -608,7 +698,7 @@ export class OnlineSession {
     }, 2000);
   }
 
-  private onPlay(data: unknown) {
+  private onPlay(data: unknown, direct = false) {
     if (typeof data === "string") {
       const message = JSON.parse(data) as {
         t: string;
@@ -637,6 +727,12 @@ export class OnlineSession {
           this.slot = slot;
           this.opts.onSwap(this.slot);
         }
+      }
+      if (message.t === "retune" && this.opts.role === "guest") {
+        this.outgoing.clear();
+        this.prepareResync();
+        this.opts.onPause();
+        this.opts.onStatus("Ajustando o atraso de input…");
       }
       if (message.t === "swap" && this.opts.role === "guest" && (message.slot === 0 || message.slot === 1)) {
         this.swapAsked = false;
@@ -674,16 +770,21 @@ export class OnlineSession {
         this.awaitingSync = false;
         const delay = typeof message.delay === "number" ? Math.min(8, Math.max(2, Math.round(message.delay))) : this.delay;
         this.delay = delay;
+        this.base = 0;
         this.started = true;
         this.opts.onReset({ slot: this.slot, delay });
       }
-      if (message.t === "ping") this.sendJson({ t: "pong", ms: message.ms });
+      if (message.t === "ping") this.sendFast({ t: "pong", ms: message.ms }, direct);
       if (message.t === "pong" && typeof message.ms === "number") {
         const rtt = performance.now() - message.ms;
-        if (rtt >= 0 && rtt < 60000) this.opts.onPing(rtt);
+        if (rtt >= 0 && rtt < 60000) {
+          this.opts.onPing(rtt);
+          if (direct === (this.link?.open ?? false)) this.noteRtt(rtt);
+        }
       }
       if (message.t === "pong" && this.opts.role === "host" && !this.started) {
-        void this.align(delayFromRtt(performance.now() - this.pingAt));
+        const sentAt = typeof message.ms === "number" ? message.ms : this.pingAt;
+        void this.align(delayFromRtt(performance.now() - sentAt));
       }
       if (message.t === "fail") {
         this.opts.onClose(message.text ?? "Não deu para alinhar a partida.");
@@ -707,7 +808,7 @@ export class OnlineSession {
         this.started = true;
         this.synced = true;
         this.swapBusy = false;
-        this.opts.onResume(this.lastSnapshot);
+        this.resumeAt(this.lastSnapshot);
       }
       return;
     }
@@ -728,6 +829,8 @@ export class OnlineSession {
     }
     const inputs = decodeInputs(data);
     if (inputs) {
+      const line = decodeInputLine(data);
+      if (line && (line.slot === this.slot || line.base !== this.base)) return;
       this.opts.onRemote(inputs);
       return;
     }
@@ -749,12 +852,13 @@ export class OnlineSession {
     this.resumed = true;
     this.synced = true;
     this.delay = done.delay;
-    this.opts.onResume({ frame: done.frame, state: done.bytes, delay: done.delay });
+    this.resumeAt({ frame: done.frame, state: done.bytes, delay: done.delay });
     this.sendJson({ t: "sync-ok" });
   }
 
   private onPeerLeft() {
     this.peerHere = false;
+    this.stopLink();
     this.swapBusy = false;
     this.swapAsked = false;
     this.awaitingSync = false;
@@ -770,7 +874,8 @@ export class OnlineSession {
     const frames = [...this.outgoing.entries()]
       .sort((a, b) => a[0] - b[0])
       .map(([frame, buttons]) => ({ frame, buttons }));
-    this.relayBytes(encodeInputs(frames));
+    const packet = encodeInputs(frames, { slot: this.slot, base: this.base });
+    if (!this.link?.send(packet)) this.relayBytes(packet);
   }
 
   private sendJson(message: unknown) {

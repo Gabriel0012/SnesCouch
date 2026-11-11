@@ -12,38 +12,68 @@ export interface StateChunk {
   bytes: Uint8Array;
 }
 
+/**
+ * Which match a window of buttons belongs to: the sender's player slot and
+ * the frame both sides resumed from. Packets from before a swap or resync
+ * carry a different line and are dropped.
+ */
+export interface InputLine {
+  slot: 0 | 1;
+  base: number;
+}
+
 const INPUT = 1;
 const STATE = 2;
 const SAVE = 3;
+const LINED_INPUT = 4;
 
-export function encodeInputs(frames: InputFrame[]): ArrayBuffer {
-  const buf = new ArrayBuffer(2 + frames.length * 6);
+export function encodeInputs(frames: InputFrame[], line?: InputLine): ArrayBuffer {
+  const head = line ? 7 : 2;
+  const buf = new ArrayBuffer(head + frames.length * 6);
   const view = new DataView(buf);
-  view.setUint8(0, INPUT);
+  view.setUint8(0, line ? LINED_INPUT : INPUT);
   view.setUint8(1, frames.length);
+  if (line) {
+    view.setUint8(2, line.slot);
+    view.setUint32(3, line.base, true);
+  }
   frames.forEach((entry, index) => {
-    const at = 2 + index * 6;
+    const at = head + index * 6;
     view.setUint32(at, entry.frame, true);
     view.setUint16(at + 4, entry.buttons & 0xffff, true);
   });
   return buf;
 }
 
+function inputHead(buf: ArrayBuffer): number {
+  if (buf.byteLength < 2) return 0;
+  const type = new DataView(buf).getUint8(0);
+  if (type === INPUT) return 2;
+  if (type === LINED_INPUT && buf.byteLength >= 7) return 7;
+  return 0;
+}
+
 export function decodeInputs(buf: ArrayBuffer): InputFrame[] | null {
-  if (buf.byteLength < 2) return null;
+  const head = inputHead(buf);
+  if (!head) return null;
   const view = new DataView(buf);
-  if (view.getUint8(0) !== INPUT) return null;
   const count = view.getUint8(1);
-  if (buf.byteLength < 2 + count * 6) return null;
+  if (buf.byteLength < head + count * 6) return null;
   const frames: InputFrame[] = [];
   for (let index = 0; index < count; index++) {
-    const at = 2 + index * 6;
+    const at = head + index * 6;
     frames.push({
       frame: view.getUint32(at, true),
       buttons: view.getUint16(at + 4, true),
     });
   }
   return frames;
+}
+
+export function decodeInputLine(buf: ArrayBuffer): InputLine | null {
+  if (inputHead(buf) !== 7) return null;
+  const view = new DataView(buf);
+  return { slot: view.getUint8(2) === 1 ? 1 : 0, base: view.getUint32(3, true) };
 }
 
 export function encodeSaveChunks(id: number, hash: number, bytes: Uint8Array, chunkSize = 12000): ArrayBuffer[] {

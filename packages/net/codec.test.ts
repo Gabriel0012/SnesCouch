@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { StateAssembler, decodeInputs, decodeSaveChunk, decodeStateChunk, encodeInputs, encodeSaveChunks, encodeStateChunks } from "./codec.ts";
+import { StateAssembler, decodeInputLine, decodeInputs, decodeSaveChunk, decodeStateChunk, encodeInputs, encodeSaveChunks, encodeStateChunks } from "./codec.ts";
 
 test("janela de botões sobrevive ida e volta", () => {
   const encoded = encodeInputs([
@@ -11,6 +11,15 @@ test("janela de botões sobrevive ida e volta", () => {
     { frame: 4, buttons: 0x0100 },
     { frame: 5, buttons: 0x00f0 },
   ]);
+});
+
+test("botões levam o jogador e o frame da retomada", () => {
+  const frames = [{ frame: 300, buttons: 0x0800 }, { frame: 301, buttons: 0 }];
+  const encoded = encodeInputs(frames, { slot: 1, base: 280 });
+  assert.deepEqual(decodeInputs(encoded), frames);
+  assert.deepEqual(decodeInputLine(encoded), { slot: 1, base: 280 });
+  assert.equal(decodeInputLine(encodeInputs(frames)), null);
+  assert.equal(decodeStateChunk(encoded), null);
 });
 
 test("o save da sala não é lido como estado de alinhamento", () => {
