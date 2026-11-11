@@ -713,7 +713,7 @@ async function boot(game: Game, rom: Uint8Array) {
   try { await speaker.resume(); } catch { /* o áudio espera um clique */ }
   stopPlay();
   romBytes = rom.slice();
-  startWorker(romBytes, null, plainGame(game));
+  startWorker(romBytes, game);
   loadedGame = game;
   selected = game;
   screen.hidden = false;
@@ -726,7 +726,9 @@ async function boot(game: Game, rom: Uint8Array) {
   await renderSaves();
 }
 
-function startWorker(rom: Uint8Array, net: ResetNet = null, plain = false) {
+function startWorker(rom: Uint8Array, game: Game, net: ResetNet = null) {
+  const plain = plainGame(game);
+  const fight = game.id === "final-fight-3";
   sab = new SharedArrayBuffer(4);
   pads = new Uint16Array(sab);
   const canvas = screen.transferControlToOffscreen();
@@ -736,7 +738,7 @@ function startWorker(rom: Uint8Array, net: ResetNet = null, plain = false) {
   worker.onmessage = (event) => onWorker(event.data);
   const copy = rom.slice();
   worker.postMessage(
-    { t: "load", rom: copy.buffer, canvas, sab, plain, probe: E2E, ...(net ? { net } : {}) },
+    { t: "load", rom: copy.buffer, canvas, sab, plain, fight, probe: E2E, ...(net && !plain ? { net } : {}) },
     [copy.buffer, canvas],
   );
 }
@@ -767,7 +769,7 @@ function relaunch(net: ResetNet) {
   worker?.terminate();
   worker = null;
   if (transferred) replaceScreen();
-  startWorker(rom, plainGame(game) ? null : net, plainGame(game));
+  startWorker(rom, game, net);
   loadedGame = game;
   setBanner(net ? "Jogo reiniciado nos dois." : "Jogo reiniciado.", "success");
 }

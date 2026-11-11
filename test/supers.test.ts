@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { RIGHT, specialSteps, superSteps } from "../apps/web/src/supers.ts";
+import {
+  FACE_LEFT_BIT,
+  MOVE_BITS,
+  PRESS_FRAMES,
+  RIGHT,
+  SPECIAL_BIT,
+  SUPER_BIT,
+  DOWN_HELD_BIT,
+  historyBytes,
+  quickMove,
+  requestedMotion,
+  specialSteps,
+  splitMove,
+  superSteps,
+} from "../apps/web/src/supers.ts";
 
 const B = 1 << 0;
 const Y = 1 << 1;
@@ -77,6 +91,42 @@ test("o golpe da Lucia é frente, baixo e diagonal com soco", () => {
   assert.equal(steps[6], RIGHT | DOWN | Y);
   assert.equal(steps.at(-1), RIGHT | DOWN | Y);
   assert.equal(steps.includes(B), false);
+});
+
+test("o histórico do jogo guarda o movimento do mais novo para o mais velho", () => {
+  assert.deepEqual(historyBytes([DOWN, DOWN | RIGHT, RIGHT, LEFT | UP]), [0, 0x0a, 0, 0x01, 0, 0x05, 0, 0x04]);
+});
+
+test("o super rápido manda o pedido no primeiro frame e o soco nos outros", () => {
+  const steps = quickMove("super", "lucia", LEFT);
+  assert.ok(steps);
+  assert.equal(steps.length, PRESS_FRAMES);
+  assert.equal(steps[0], LEFT | Y | SUPER_BIT | FACE_LEFT_BIT);
+  for (const step of steps.slice(1)) assert.equal(step, LEFT | Y);
+  assert.deepEqual(requestedMotion(steps[0], "lucia"), splitMove(superSteps("lucia", LEFT))?.motion);
+  assert.equal(requestedMotion(steps[1], "lucia"), null);
+});
+
+test("o golpe rápido do Dean puxando guarda o baixo no pedido", () => {
+  const steps = quickMove("special", "dean", RIGHT, DOWN);
+  assert.ok(steps);
+  assert.equal(steps[0] & MOVE_BITS, SPECIAL_BIT | DOWN_HELD_BIT);
+  assert.deepEqual(requestedMotion(steps[0], "dean"), splitMove(specialSteps("dean", RIGHT, DOWN))?.motion);
+});
+
+test("o pedido é lido igual para cada personagem do outro lado", () => {
+  for (const fighter of ["guy", "haggar", "lucia", "dean"] as const) {
+    for (const forward of [LEFT, RIGHT]) {
+      const steps = quickMove("special", fighter, forward);
+      assert.ok(steps, fighter);
+      assert.deepEqual(requestedMotion(steps[0], fighter), splitMove(specialSteps(fighter, forward))?.motion);
+    }
+  }
+});
+
+test("a Lucia no ar continua no macro, porque precisa pular antes", () => {
+  assert.equal(splitMove(specialSteps("lucia", LEFT, UP)), null);
+  assert.equal(quickMove("special", "lucia", LEFT, UP), null);
 });
 
 test("a Lucia no ar pula e depois faz a meia-lua com soco", () => {

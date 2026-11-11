@@ -1,7 +1,19 @@
 import createSnes from "./generated/snes.js";
 import wasmUrl from "./generated/snes.wasm?url";
 import { Lockstep, type Slot } from "../../../packages/net/lockstep.ts";
-import { LEFT, RIGHT, specialSteps, superSteps, type Fighter } from "./supers.ts";
+import {
+  FIGHTER_RAM,
+  HISTORY_RAM,
+  LEFT,
+  MOVE_BITS,
+  RIGHT,
+  historyBytes,
+  quickMove,
+  requestedMotion,
+  specialSteps,
+  superSteps,
+  type Fighter,
+} from "./supers.ts";
 
 type Core = {
   wasmMemory: WebAssembly.Memory;
@@ -24,7 +36,7 @@ type Core = {
 };
 
 let core: Core | null = null;
-interface LoadMessage { t: "load"; rom: ArrayBuffer; canvas: OffscreenCanvas; sab: SharedArrayBuffer; net?: { slot: Slot; delay: number }; plain?: boolean; watch?: boolean; probe?: boolean }
+interface LoadMessage { t: "load"; rom: ArrayBuffer; canvas: OffscreenCanvas; sab: SharedArrayBuffer; net?: { slot: Slot; delay: number }; plain?: boolean; watch?: boolean; probe?: boolean; fight?: boolean }
 interface NetStart { t: "net-start"; slot: Slot; delay: number }
 interface NetRemote { t: "net-remote"; frames: { frame: number; buttons: number }[] }
 interface NetResume { t: "net-resume"; slot: Slot; delay: number; frame: number; state: ArrayBuffer }
@@ -65,6 +77,7 @@ let watchFrame = -1;
 let watchPrimed = false;
 const watchQueue = new Map<number, [number, number]>();
 let probing = false;
+let fight = false;
 const probeRing: [number, number][] = [];
 const WATCH_PRIME = 8;
 const WATCH_BEHIND = 30;
@@ -139,8 +152,9 @@ function emitAudio() {
 
 function run(p0: number, p1: number) {
   if (!core) return;
-  core._snes_set_input(0, p0);
-  core._snes_set_input(1, p1);
+  if (fight) applyMoves(p0, p1);
+  core._snes_set_input(0, p0 & ~MOVE_BITS);
+  core._snes_set_input(1, p1 & ~MOVE_BITS);
   core._snes_run_frame();
   paint();
   emitAudio();
@@ -236,7 +250,29 @@ function readFighterByte(macroPort: 0 | 1): number | null {
   if (!state) return null;
   const ram = blockStart(state, "RAM", 0x20000);
   if (ram < 0) return null;
-  return state[ram + (port === 0 ? 0x1f15 : 0x0f16)];
+  return state[ram + FIGHTER_RAM[port]];
+}
+
+/**
+ * Runs on every emulator with the same pads, so the write is identical
+ * everywhere: the requested motion goes into that player's pad history and
+ * the game reads the press on this frame as the full command.
+ */
+function applyMoves(p0: number, p1: number) {
+  if (((p0 | p1) & MOVE_BITS) === 0) return;
+  const state = saveState();
+  if (!state) return;
+  const ram = blockStart(state, "RAM", 0x20000);
+  if (ram < 0) return;
+  let wrote = false;
+  for (const port of [0, 1] as const) {
+    const fighter = fighterByte(state[ram + FIGHTER_RAM[port]]);
+    const motion = fighter ? requestedMotion(port === 0 ? p0 : p1, fighter) : null;
+    if (!motion) continue;
+    state.set(historyBytes(motion), ram + HISTORY_RAM[port]);
+    wrote = true;
+  }
+  if (wrote) loadState(state, true);
 }
 
 function saveState() {
@@ -263,13 +299,14 @@ function loadRom(bytes: Uint8Array) {
   return ok === 1;
 }
 
-function loadState(bytes: Uint8Array) {
+/** `inPlace` edits the running game; spectators repeat the same edit, so they need no new snapshot. */
+function loadState(bytes: Uint8Array, inPlace = false) {
   if (!core) return false;
   const ptr = core._malloc(bytes.length);
   heap().set(bytes, ptr);
   const ok = core._snes_load_state(ptr, bytes.length);
   core._free(ptr);
-  if (ok === 1 && watching) watchDirty = true;
+  if (ok === 1 && watching && !inPlace) watchDirty = true;
   return ok === 1;
 }
 
@@ -389,6 +426,7 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
   if (message.t === "load") {
     canvas = message.canvas;
     probing = message.probe === true;
+    fight = message.fight === true;
     ctx = canvas.getContext("2d", { alpha: false });
     pads = new Uint16Array(message.sab);
     core = await createSnes({ locateFile: (file: string) => (file.endsWith(".wasm") ? wasmUrl : file) }) as Core;
@@ -463,23 +501,18 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
     if (watchFrame < 0 && watchQueue.size > 600) watchQueue.clear();
     return;
   }
-  if (message.t === "super") {
+  if (message.t === "super" || message.t === "special") {
     const port = message.port === 1 ? 1 : 0;
     const incoming = Array.isArray(message.steps) ? message.steps : [];
     const fighter = fighterByte(readFighterByte(port) ?? -1);
+    if (!fighter) {
+      playMacro(port, incoming);
+      return;
+    }
     const forward = incoming.some((step) => (Number(step) & LEFT) !== 0) ? LEFT : RIGHT;
-    const steps = fighter ? superSteps(fighter, forward) : incoming;
-    playMacro(port, steps);
-    return;
-  }
-  if (message.t === "special") {
-    const port = message.port === 1 ? 1 : 0;
-    const incoming = Array.isArray(message.steps) ? message.steps : [];
-    const fighter = fighterByte(readFighterByte(port) ?? -1);
-    const forward = incoming.some((step) => (Number(step) & LEFT) !== 0) ? LEFT : RIGHT;
-    const held = Number(message.held) & 0xffff;
-    const steps = fighter ? specialSteps(fighter, forward, held) : incoming;
-    playMacro(port, steps);
+    const held = message.t === "special" ? Number(message.held) & 0xffff : 0;
+    const quick = fight ? quickMove(message.t, fighter, forward, held) : null;
+    playMacro(port, quick ?? (message.t === "super" ? superSteps(fighter, forward) : specialSteps(fighter, forward, held)));
     return;
   }
   if (message.t === "net-arm") {
