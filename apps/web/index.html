@@ -199,6 +199,14 @@
           <div class="fold-body">
             <h2>Jogadores</h2>
             <ul id="players" class="people"></ul>
+            <div id="watchers-box" hidden>
+              <h2>Espectadores</h2>
+              <ul id="watchers" class="people watchers"></ul>
+            </div>
+            <div id="seat-mode" class="cluster" role="group" aria-label="Como você está na sala" hidden>
+              <button type="button" data-seat-mode="play" aria-pressed="false"><i class="ico-pad" aria-hidden="true"></i>Jogar</button>
+              <button type="button" data-seat-mode="watch" aria-pressed="false"><i class="ico-eye" aria-hidden="true"></i>Assistindo</button>
+            </div>
             <label class="nick">Seu nome
               <input id="nick" maxlength="20" autocomplete="nickname" spellcheck="false" placeholder="Nome na sala" />
             </label>
@@ -213,6 +221,7 @@
                 </div>
               </div>
               <button id="leave" type="button" hidden>Sair da sala</button>
+              <button id="bans-open" class="bans-open" type="button" hidden>Bloqueados</button>
             </div>
             <p id="delay"></p>
           </div>
@@ -280,6 +289,30 @@
         <p id="saves-cloud" class="note" hidden>A conta guarda estes saves. A ROM fica neste navegador.</p>
         <div id="saves-grid"></div>
         <input id="save-import" type="file" accept=".couchsave,application/json" hidden />
+      </div>
+    </div>
+    <div id="join-choice" hidden>
+      <div class="choice-card" role="dialog" aria-modal="true" aria-labelledby="join-choice-title">
+        <div class="saves-bar">
+          <h2 id="join-choice-title">Entrar na sala</h2>
+          <button id="join-choice-close" type="button" aria-label="Fechar">×</button>
+        </div>
+        <p id="join-choice-text"></p>
+        <div class="choice-options">
+          <button id="join-play" type="button"><i class="ico-pad" aria-hidden="true"></i>Jogar</button>
+          <button id="join-watch" type="button"><i class="ico-eye" aria-hidden="true"></i>Assistir</button>
+        </div>
+        <p class="note">A escolha fica guardada. Na sala, o botão Jogar/Assistindo troca quando quiser.</p>
+      </div>
+    </div>
+    <div id="bans-modal" hidden>
+      <div class="choice-card" role="dialog" aria-modal="true" aria-labelledby="bans-title">
+        <div class="saves-bar">
+          <h2 id="bans-title">Bloqueados</h2>
+          <button id="bans-close" type="button" aria-label="Fechar">×</button>
+        </div>
+        <p class="note">Quem foi removido não volta para esta sala enquanto ela existir.</p>
+        <ul id="bans-list"></ul>
       </div>
     </div>
     <div id="settings" hidden>

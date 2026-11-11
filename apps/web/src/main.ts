@@ -42,7 +42,7 @@ import { startTouch } from "./touch.ts";
 import { controlGuide, keyboardScheme, padLabel } from "./pads.ts";
 import { games, isLibraryGame, localGame, localRomId, looksLikeSnesRom, matchRom, sha1Of, titleFromFile, type Game, type LibraryGame } from "./rom.ts";
 import { decodeSaveFile, encodeSaveFile } from "./save-file.ts";
-import { OnlineSession, type ChatLine, type Role, type Seat } from "./session.ts";
+import { OnlineSession, SEAT_TAKEN, type Ban, type ChatLine, type Role, type Roster } from "./session.ts";
 import { FIGHTERS, LEFT, RIGHT, SELECT, X, fighterLabel, specialSteps, superSteps, type Fighter } from "./supers.ts";
 import { bindScreen, setCrt, whenCrtDrops } from "./crt.ts";
 import { conceal, reveal, shown } from "./motion.ts";
@@ -190,7 +190,10 @@ let selected: Game = games[0];
 let loadedGame: Game | null = null;
 let ready = new Set<string>();
 let session: OnlineSession | null = null;
-let roster: { host: Seat; guest: Seat } | null = null;
+let roster: Roster | null = null;
+let hostWatching = false;
+let bans: Ban[] = [];
+let kickTarget: { id: string; name: string } | null = null;
 let worker: Worker | null = null;
 const speaker = new Speaker();
 let sab: SharedArrayBuffer | null = null;
@@ -204,7 +207,38 @@ const localChecks = new Map<number, number>();
 const remoteChecks = new Map<number, number>();
 let checkpointWait: ((snapshot: { frame: number; state: Uint8Array; delay: number }) => void) | null = null;
 let saveWait: ((saved: { state: Uint8Array; shot: Uint8Array | null }) => void) | null = null;
-type AlertMode = "forget" | "reset-local" | "reset-ask" | "reset-wait" | "reset-in" | "drop-slot";
+type AlertMode = "forget" | "reset-local" | "reset-ask" | "reset-wait" | "reset-in" | "drop-slot" | "kick";
+const CID_KEY = "snes-couch-cid";
+const JOIN_KEY = "snes-couch-join-as";
+type JoinAs = "play" | "watch";
+
+function clientId(): string {
+  try {
+    const saved = localStorage.getItem(CID_KEY);
+    if (saved) return saved;
+    const fresh = crypto.randomUUID();
+    localStorage.setItem(CID_KEY, fresh);
+    return fresh;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
+const cid = clientId();
+
+function storedJoin(): JoinAs | null {
+  try {
+    const value = localStorage.getItem(JOIN_KEY);
+    return value === "play" || value === "watch" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberJoin(choice: JoinAs) {
+  try { localStorage.setItem(JOIN_KEY, choice); }
+  catch { /* a escolha vale só nesta visita */ }
+}
 let alertMode: AlertMode | null = null;
 let dropTarget: { gameId: string; slot: number } | null = null;
 let importSlot: number | null = null;
@@ -731,7 +765,18 @@ function onWorker(message: {
     if (fpsOn) fpsBadge.textContent = `${Math.round(message.fps)} FPS`;
     return;
   }
+  if (message.t === "watch-state" && message.state && message.frame !== undefined) {
+    if (hostWatching) session?.sendWatchState(message.frame, new Uint8Array(message.state));
+    return;
+  }
+  if (message.t === "watch-frames" && Array.isArray(message.frames)) {
+    if (hostWatching) session?.sendWatchFrames(message.frames as unknown as number[]);
+    return;
+  }
   if (message.t === "loaded" && message.rate) {
+    if (session?.role === "spectator") worker?.postMessage({ t: "watch-mode" });
+    hostWatching = false;
+    syncHostWatch();
     speaker.setRate(message.rate);
     relaunching = false;
     window.clearTimeout(resetTimer);
@@ -988,9 +1033,21 @@ function blinkLine(row: HTMLElement) {
 function pushChat(line: ChatLine, live = false) {
   const row = document.createElement("p");
   row.className = "play-line";
+  if (line.from === "spectator") {
+    row.classList.add("from-watcher");
+    const eye = document.createElement("i");
+    eye.className = "chat-eye";
+    eye.title = "Assistindo";
+    row.append(eye);
+  } else if (line.slot === 0 || line.slot === 1) {
+    const chip = document.createElement("i");
+    chip.className = `chat-slot p${line.slot + 1}`;
+    chip.textContent = `P${line.slot + 1}`;
+    row.append(chip);
+  }
   const who = document.createElement("b");
   const name = line.name?.trim();
-  who.textContent = name || (line.from === "host" ? "Anfitrião" : "Convidado");
+  who.textContent = name || (line.from === "host" ? "Anfitrião" : line.from === "guest" ? "Convidado" : "Espectador");
   row.append(who, document.createTextNode(` ${line.text}`));
   log.append(row);
   if (!live) return;
@@ -1028,6 +1085,80 @@ function paintHostMark() {
   const label = ownerMark();
   roomHost.textContent = label;
   roomHost.hidden = !label;
+}
+
+function stopHostWatch() {
+  if (!hostWatching) return;
+  hostWatching = false;
+  worker?.postMessage({ t: "watch-stop" });
+}
+
+function syncHostWatch() {
+  const want = session?.role === "host" && !!roster && roster.spectators.length > 0;
+  if (want === hostWatching) return;
+  if (!want) {
+    stopHostWatch();
+    return;
+  }
+  hostWatching = true;
+  worker?.postMessage({ t: "watch-start" });
+}
+
+const seatMode = document.querySelector<HTMLElement>("#seat-mode")!;
+const bansOpen = document.querySelector<HTMLButtonElement>("#bans-open")!;
+const resetButton = document.querySelector<HTMLButtonElement>("#reset")!;
+
+function watchingRoom(): boolean {
+  return session?.role === "spectator";
+}
+
+function paintRoomRole() {
+  const role = session?.role ?? null;
+  shown(seatMode, role === "guest" || role === "spectator", "left");
+  for (const button of seatMode.querySelectorAll<HTMLButtonElement>("[data-seat-mode]")) {
+    const on = button.dataset.seatMode === (role === "spectator" ? "watch" : "play");
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  bansOpen.hidden = role !== "host";
+  resetButton.disabled = role === "spectator";
+  swapButton.hidden = role === "spectator";
+  peopleKey = "";
+  renderPeople();
+}
+
+function switchSeat(choice: JoinAs) {
+  if (!session || session.role === "host") return;
+  const now: JoinAs = session.role === "spectator" ? "watch" : "play";
+  if (choice === now) return;
+  const code = roomCode.textContent?.trim() || "";
+  if (!code) return;
+  rememberJoin(choice);
+  void connect(choice === "watch" ? "spectator" : "guest", code);
+}
+
+function paintBans() {
+  bansOpen.textContent = bans.length ? `Bloqueados (${bans.length})` : "Bloqueados";
+  const list = document.querySelector<HTMLElement>("#bans-list")!;
+  list.replaceChildren();
+  if (bans.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "bans-empty";
+    empty.textContent = "Ninguém bloqueado.";
+    list.append(empty);
+    return;
+  }
+  for (const ban of bans) {
+    const item = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = ban.name;
+    const undo = document.createElement("button");
+    undo.type = "button";
+    undo.textContent = "Desbloquear";
+    undo.addEventListener("click", () => session?.unban(ban.cid));
+    item.append(name, undo);
+    list.append(item);
+  }
 }
 
 function setRoomChrome(on: boolean) {
@@ -1096,7 +1227,22 @@ function closeManual() {
   conceal(manual, "modal");
 }
 
-function playerLine(seat: string, name: string, control: string, state: string, index: number, animate: boolean, slot: 0 | 1) {
+function kickButton(id: string, name: string) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "kick-btn";
+  button.title = "Remover da sala";
+  button.setAttribute("aria-label", `Remover ${name} da sala`);
+  button.textContent = "×";
+  button.addEventListener("click", () => {
+    if (alertMode) return;
+    kickTarget = { id, name };
+    openAlert("kick", name);
+  });
+  return button;
+}
+
+function playerLine(seat: string, name: string, control: string, state: string, index: number, animate: boolean, slot: 0 | 1, kickId = "") {
   const item = document.createElement("li");
   item.dataset.seat = seat;
   if (animate) {
@@ -1116,7 +1262,31 @@ function playerLine(seat: string, name: string, control: string, state: string, 
   meta.textContent = `${control} · ${state}`;
   text.append(who, meta);
   item.append(text);
+  if (kickId) item.append(kickButton(kickId, name));
   return item;
+}
+
+const watchersBox = document.querySelector<HTMLElement>("#watchers-box")!;
+const watchersList = document.querySelector<HTMLElement>("#watchers")!;
+
+function renderWatchers() {
+  const list = session && roster ? roster.spectators : [];
+  watchersBox.hidden = list.length === 0;
+  watchersList.replaceChildren();
+  const host = session?.role === "host";
+  for (const watcher of list) {
+    const item = document.createElement("li");
+    const chip = document.createElement("span");
+    chip.className = "eye-chip";
+    chip.title = "Assistindo";
+    chip.setAttribute("aria-label", "Assistindo");
+    const who = document.createElement("b");
+    const fallback = "Espectador";
+    who.textContent = watcher.name || fallback;
+    item.append(chip, who);
+    if (host) item.append(kickButton(watcher.id, watcher.name || fallback));
+    watchersList.append(item);
+  }
 }
 
 const swapItem = document.createElement("li");
@@ -1143,10 +1313,11 @@ function seatRows(animate: boolean): [HTMLLIElement, HTMLLIElement] {
   }
   const you = session.role;
   const mine = session.playSlot();
-  const hostSlot: 0 | 1 = you === "host" ? mine : (mine === 0 ? 1 : 0);
+  const hostSlot: 0 | 1 = you === "host" ? mine : you === "guest" ? (mine === 0 ? 1 : 0) : roster.hostSlot;
+  const guestKick = you === "host" && roster.guest.here && roster.guest.id ? roster.guest.id : "";
   const seats = [
-    { id: "host", slot: hostSlot, seat: roster.host, mine: you === "host", fallback: "Anfitrião", absent: "saiu" },
-    { id: "guest", slot: (hostSlot === 0 ? 1 : 0) as 0 | 1, seat: roster.guest, mine: you === "guest", fallback: "Convidado", absent: "aguardando" },
+    { id: "host", slot: hostSlot, seat: roster.host, mine: you === "host", fallback: "Anfitrião", absent: "saiu", kick: "" },
+    { id: "guest", slot: (hostSlot === 0 ? 1 : 0) as 0 | 1, seat: roster.guest, mine: you === "guest", fallback: "Convidado", absent: "aguardando", kick: guestKick },
   ].sort((a, b) => a.slot - b.slot);
   const [top, bottom] = seats.map((row, index) => {
     const present = row.mine || row.seat.here;
@@ -1159,6 +1330,7 @@ function seatRows(animate: boolean): [HTMLLIElement, HTMLLIElement] {
       index,
       animate,
       row.slot,
+      row.kick,
     );
   });
   return [top, bottom];
@@ -1166,11 +1338,13 @@ function seatRows(animate: boolean): [HTMLLIElement, HTMLLIElement] {
 
 function renderPeople() {
   const [first, second] = padStatus();
+  const watchers = roster?.spectators.map((watcher) => `${watcher.id}=${watcher.name}`).join(",") ?? "";
   const key = session && roster
-    ? `sala:${session.role}:${session.playSlot()}:${roster.host.here}:${roster.host.control}:${roster.host.name}:${roster.guest.here}:${roster.guest.control}:${roster.guest.name}`
+    ? `sala:${session.role}:${session.playSlot()}:${roster.hostSlot}:${roster.host.here}:${roster.host.control}:${roster.host.name}:${roster.guest.here}:${roster.guest.control}:${roster.guest.name}:${roster.guest.id ?? ""}:${watchers}`
     : `local:${localSwap}:${roomName()}:${first ?? ""}:${second ?? ""}`;
   if (key === peopleKey) return;
   peopleKey = key;
+  renderWatchers();
   const animate = peoplePaints >= 2;
   peoplePaints += 1;
   const before = new Map<string, number>();
@@ -1500,6 +1674,10 @@ function hideConfirm() {
 
 async function readSlot(game: Game, slot: number, savedAt: number) {
   if (!worker || loadedGame?.id !== game.id) return;
+  if (watchingRoom()) {
+    setBanner("Quem assiste não carrega save na partida.");
+    return;
+  }
   closeSaves(true);
   const state = await loadState(game.id, slot);
   if (!state) return;
@@ -1552,13 +1730,32 @@ async function connect(role: Role, code: string) {
   localChecks.clear();
   remoteChecks.clear();
   roster = null;
-  worker?.postMessage({ t: "net-arm" });
+  bans = [];
+  stopHostWatch();
+  worker?.postMessage({ t: role === "spectator" ? "watch-mode" : "net-arm" });
   clearChat();
   const mine = new OnlineSession({
     code,
     role,
     gameId: selected.id,
     sha1: selected.sha1,
+    cid,
+    onWatchState: (frame, state) => {
+      if (session !== mine) return;
+      const copy = state.slice();
+      worker?.postMessage({ t: "watch-load", frame, state: copy.buffer }, [copy.buffer]);
+    },
+    onWatchFrames: (frames) => {
+      if (session === mine) worker?.postMessage({ t: "watch-frames", frames });
+    },
+    onSpectatorJoined: () => {
+      if (session === mine) worker?.postMessage({ t: "watch-snapshot" });
+    },
+    onBans: (list) => {
+      if (session !== mine) return;
+      bans = list;
+      paintBans();
+    },
     onStatus: (text) => {
       roomState.textContent = text;
     },
@@ -1608,10 +1805,17 @@ async function connect(role: Role, code: string) {
         setBanner("O outro jogador cancelou o reinício.");
       }
     },
-    onClose: (reason) => {
+    onClose: (reason, closeCode) => {
       if (session !== mine) return;
+      if (closeCode === SEAT_TAKEN && role === "guest") {
+        setBanner("O lugar de jogador está ocupado. Você entrou para assistir.");
+        void connect("spectator", code);
+        return;
+      }
       session = null;
       roster = null;
+      stopHostWatch();
+      paintRoomRole();
       setChatEnabled(false);
       setRoomCode(null);
       setRoomChrome(false);
@@ -1638,6 +1842,7 @@ async function connect(role: Role, code: string) {
       roster = next;
       renderPeople();
       paintHostMark();
+      syncHostWatch();
     },
     onSaveOffer: (offer) => {
       if (session !== mine || saveDialog) {
@@ -1682,6 +1887,7 @@ async function connect(role: Role, code: string) {
   session = mine;
   setRoomCode(code);
   setRoomChrome(true);
+  paintRoomRole();
   const name = roomName();
   mine.setProfile(localControl(), name);
   setChatEnabled(true);
@@ -1691,6 +1897,7 @@ async function connect(role: Role, code: string) {
     await session.open();
   } catch (error) {
     if (session === mine) session = null;
+    paintRoomRole();
     setRoomChrome(false);
     setChatEnabled(false);
     setRoomCode(null);
@@ -1853,8 +2060,43 @@ function joinCode(raw: string) {
     return;
   }
   codeInput.value = code;
-  void connect("guest", code);
+  const choice = storedJoin();
+  if (choice) {
+    void connect(choice === "watch" ? "spectator" : "guest", code);
+    return;
+  }
+  openJoinChoice(code);
 }
+
+const joinChoice = document.querySelector<HTMLElement>("#join-choice")!;
+let joinChoiceCode = "";
+
+function openJoinChoice(code: string) {
+  joinChoiceCode = code;
+  document.querySelector("#join-choice-text")!.textContent = `Como você quer entrar na sala ${code}?`;
+  reveal(joinChoice, "modal");
+  document.querySelector<HTMLButtonElement>("#join-play")?.focus();
+}
+
+function closeJoinChoice() {
+  joinChoiceCode = "";
+  conceal(joinChoice, "modal");
+}
+
+function pickJoin(choice: JoinAs) {
+  const code = joinChoiceCode;
+  closeJoinChoice();
+  if (!code) return;
+  rememberJoin(choice);
+  void connect(choice === "watch" ? "spectator" : "guest", code);
+}
+
+document.querySelector("#join-play")!.addEventListener("click", () => pickJoin("play"));
+document.querySelector("#join-watch")!.addEventListener("click", () => pickJoin("watch"));
+document.querySelector("#join-choice-close")!.addEventListener("click", () => closeJoinChoice());
+joinChoice.addEventListener("click", (event) => {
+  if (event.target === joinChoice) closeJoinChoice();
+});
 
 function paintAccount() {
   const logged = Boolean(account);
@@ -2727,6 +2969,8 @@ function leaveRoom() {
   session = null;
   current.close();
   roster = null;
+  stopHostWatch();
+  paintRoomRole();
   setChatEnabled(false);
   setRoomCode(null);
   setRoomChrome(false);
@@ -2824,6 +3068,8 @@ window.addEventListener("keydown", (event) => {
   else if (event.code === "Escape" && !libraryEdit.hidden) closeLibraryEdit();
   else if (event.code === "Escape" && !savesModal.hidden) closeSaves();
   else if (event.code === "Escape" && !settings.hidden) closeSettings();
+  else if (event.code === "Escape" && !bansModal.hidden) closeBans();
+  else if (event.code === "Escape" && !joinChoice.hidden) closeJoinChoice();
   else if (event.code === "Escape" && !manual.hidden) closeManual();
   else if (event.code === "Escape" && !playChat.hidden) {
     event.preventDefault();
@@ -2891,7 +3137,7 @@ window.addEventListener("keydown", (event) => {
     const tag = target.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON" || tag === "A" || tag === "SUMMARY" || target.isContentEditable) return;
   }
-  if (!manual.hidden || !alertBox.hidden || !savesModal.hidden || !settings.hidden || !libraryEdit.hidden) return;
+  if (!manual.hidden || !alertBox.hidden || !savesModal.hidden || !settings.hidden || !libraryEdit.hidden || !bansModal.hidden || !joinChoice.hidden) return;
   const tour = document.querySelector("#tour");
   if (tour instanceof HTMLElement && !tour.hidden) return;
   if (event.code === "KeyC") {
@@ -2985,6 +3231,28 @@ function closeSettings(immediate = false) {
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-settings-open]")) {
   button.addEventListener("click", () => openSettings());
 }
+const bansModal = document.querySelector<HTMLElement>("#bans-modal")!;
+
+function closeBans() {
+  conceal(bansModal, "modal");
+}
+
+bansOpen.addEventListener("click", () => {
+  if (session?.role !== "host") return;
+  paintBans();
+  session.requestBans();
+  reveal(bansModal, "modal");
+  document.querySelector<HTMLButtonElement>("#bans-close")?.focus();
+});
+document.querySelector("#bans-close")!.addEventListener("click", () => closeBans());
+bansModal.addEventListener("click", (event) => {
+  if (event.target === bansModal) closeBans();
+});
+
+for (const button of seatMode.querySelectorAll<HTMLButtonElement>("[data-seat-mode]")) {
+  button.addEventListener("click", () => switchSeat(button.dataset.seatMode === "watch" ? "watch" : "play"));
+}
+
 document.querySelector("#settings-close")!.addEventListener("click", () => closeSettings());
 settings.addEventListener("click", (event) => {
   if (event.target === settings) closeSettings();
@@ -2993,6 +3261,7 @@ settings.addEventListener("click", (event) => {
 document.querySelector("#banner-close")!.addEventListener("click", () => setBanner(""));
 
 document.querySelector("#reset")!.addEventListener("click", () => {
+  if (watchingRoom()) return;
   if (!worker || !loadedGame) {
     setBanner("Solte a ROM antes de reiniciar.");
     return;
@@ -3068,7 +3337,7 @@ document.addEventListener("pointerdown", (event) => {
   setPlayMenu(false);
 });
 
-const stageModals = ["#banner", "#library-edit", "#alert", "#saves-modal", "#settings", "#manual"].map((selector) => {
+const stageModals = ["#banner", "#library-edit", "#alert", "#saves-modal", "#settings", "#join-choice", "#bans-modal", "#manual"].map((selector) => {
   const node = document.querySelector<HTMLElement>(selector)!;
   return { node, parent: node.parentElement!, next: node.nextSibling };
 });
@@ -3126,6 +3395,9 @@ function openAlert(mode: AlertMode, name = "") {
   } else if (mode === "drop-slot") {
     alertText.textContent = `Apagar o save ${dropTarget?.slot ?? ""}? Ele sai deste navegador. Não tem como desfazer.`;
     alertYes.textContent = "Apagar";
+  } else if (mode === "kick") {
+    alertText.textContent = `Remover ${name} da sala? A pessoa fica bloqueada enquanto a sala existir. Dá para desbloquear em Bloqueados.`;
+    alertYes.textContent = "Remover";
   } else {
     alertText.textContent = `${name} quer reiniciar o jogo. Confirme para os dois voltarem ao começo juntos.`;
     alertYes.textContent = "Confirmar";
@@ -3137,6 +3409,7 @@ function openAlert(mode: AlertMode, name = "") {
 function closeAlert() {
   alertMode = null;
   dropTarget = null;
+  kickTarget = null;
   alertYes.hidden = false;
   conceal(alertBox, "modal");
 }
@@ -3269,6 +3542,14 @@ document.querySelector("#forget")!.addEventListener("click", () => {
 
 alertYes.addEventListener("click", () => {
   const mode = alertMode;
+  if (mode === "kick") {
+    const target = kickTarget;
+    closeAlert();
+    if (!target || session?.role !== "host") return;
+    session.kick(target.id);
+    setBanner(`${target.name} saiu da sala e ficou bloqueado.`);
+    return;
+  }
   if (mode === "drop-slot") {
     const target = dropTarget;
     closeAlert();
@@ -3407,9 +3688,12 @@ function pump() {
   if (fresh) noteActivity();
   if (fresh && composing()) leaveComposer();
   const fight = loadedGame?.id === "final-fight-3";
-  writePads(fight ? padsNow[0] & ~X : padsNow[0], fight ? padsNow[1] & ~X : padsNow[1]);
-  pollSupers(padsNow, supers);
-  pollSpecials(padsNow);
+  if (watchingRoom()) writePads(0, 0);
+  else {
+    writePads(fight ? padsNow[0] & ~X : padsNow[0], fight ? padsNow[1] & ~X : padsNow[1]);
+    pollSupers(padsNow, supers);
+    pollSpecials(padsNow);
+  }
   if (session) publishProfile();
   renderPeople();
   if (!manual.hidden && padKey() !== shownPads) fillManual();

@@ -24,22 +24,24 @@ type Core = {
 };
 
 let core: Core | null = null;
-interface LoadMessage { t: "load"; rom: ArrayBuffer; canvas: OffscreenCanvas; sab: SharedArrayBuffer; net?: { slot: Slot; delay: number }; plain?: boolean }
+interface LoadMessage { t: "load"; rom: ArrayBuffer; canvas: OffscreenCanvas; sab: SharedArrayBuffer; net?: { slot: Slot; delay: number }; plain?: boolean; watch?: boolean }
 interface NetStart { t: "net-start"; slot: Slot; delay: number }
 interface NetRemote { t: "net-remote"; frames: { frame: number; buttons: number }[] }
 interface NetResume { t: "net-resume"; slot: Slot; delay: number; frame: number; state: ArrayBuffer }
 interface RestoreMessage { t: "restore"; state: ArrayBuffer }
 interface ResetMessage { t: "reset"; slot?: Slot; delay?: number }
-interface Simple { t: "local" | "pause" | "checkpoint" | "stop" | "save" | "net-arm" }
+interface Simple { t: "local" | "pause" | "checkpoint" | "stop" | "save" | "net-arm" | "watch-start" | "watch-stop" | "watch-snapshot" | "watch-mode" }
 interface SuperMessage { t: "super"; port: 0 | 1; steps: number[] }
 interface SpecialMessage { t: "special"; port: 0 | 1; held: number; steps: number[] }
+interface WatchLoad { t: "watch-load"; frame: number; state: ArrayBuffer }
+interface WatchFrames { t: "watch-frames"; frames: number[] }
 
-type Incoming = LoadMessage | NetStart | NetRemote | NetResume | RestoreMessage | ResetMessage | Simple | SuperMessage | SpecialMessage;
+type Incoming = LoadMessage | NetStart | NetRemote | NetResume | RestoreMessage | ResetMessage | Simple | SuperMessage | SpecialMessage | WatchLoad | WatchFrames;
 
 let canvas: OffscreenCanvas | null = null;
 let ctx: OffscreenCanvasRenderingContext2D | null = null;
 let pads: Uint16Array | null = null;
-let mode: "local" | "net" | "paused" = "paused";
+let mode: "local" | "net" | "paused" | "watch" = "paused";
 let lockstep: Lockstep | null = null;
 let checkpoint: Uint8Array | null = null;
 let checkpointFrame = 0;
@@ -54,6 +56,16 @@ let lastRaf = 0;
 let fpsFrames = 0;
 let fpsSince = 0;
 let fpsShown = 0;
+let frameNo = 0;
+let watching = false;
+let watchDirty = false;
+let watchOut: number[] = [];
+let watchSentAt = 0;
+let watchFrame = -1;
+let watchPrimed = false;
+const watchQueue = new Map<number, [number, number]>();
+const WATCH_PRIME = 8;
+const WATCH_BEHIND = 30;
 const pendingRemote: { frame: number; buttons: number }[] = [];
 const macro: [number[] | null, number[] | null] = [null, null];
 const macroAt = [0, 0];
@@ -131,6 +143,50 @@ function run(p0: number, p1: number) {
   paint();
   emitAudio();
   fpsFrames += 1;
+  if (watching) watchOut.push(frameNo, p0 & 0xffff, p1 & 0xffff);
+  frameNo += 1;
+}
+
+function flushWatch(now: number) {
+  if (!watching) return;
+  if (watchDirty) {
+    watchDirty = false;
+    watchOut = [];
+    const state = saveState();
+    if (state) {
+      const copy = state.slice();
+      post({ t: "watch-state", frame: frameNo, state: copy.buffer }, [copy.buffer]);
+    }
+    watchSentAt = now;
+    return;
+  }
+  if (watchOut.length === 0) return;
+  if (watchOut.length < 18 && now - watchSentAt < 100) return;
+  post({ t: "watch-frames", frames: watchOut });
+  watchOut = [];
+  watchSentAt = now;
+}
+
+function watchTick() {
+  if (watchFrame < 0) return;
+  let ahead = 0;
+  while (watchQueue.has(watchFrame + ahead)) ahead += 1;
+  if (!watchPrimed) {
+    if (ahead < WATCH_PRIME) return;
+    watchPrimed = true;
+  }
+  if (ahead === 0) {
+    watchPrimed = false;
+    return;
+  }
+  const steps = ahead > WATCH_BEHIND ? 2 : 1;
+  for (let i = 0; i < steps; i++) {
+    const pads = watchQueue.get(watchFrame);
+    if (!pads) break;
+    watchQueue.delete(watchFrame);
+    run(pads[0], pads[1]);
+    watchFrame += 1;
+  }
 }
 
 async function frameShot(): Promise<Uint8Array | null> {
@@ -195,6 +251,7 @@ function loadRom(bytes: Uint8Array) {
   heap().set(bytes, ptr);
   const ok = core._snes_load(ptr, bytes.length);
   core._free(ptr);
+  if (ok === 1 && watching) watchDirty = true;
   return ok === 1;
 }
 
@@ -204,6 +261,7 @@ function loadState(bytes: Uint8Array) {
   heap().set(bytes, ptr);
   const ok = core._snes_load_state(ptr, bytes.length);
   core._free(ptr);
+  if (ok === 1 && watching) watchDirty = true;
   return ok === 1;
 }
 
@@ -241,7 +299,21 @@ function beginNet(slot: Slot, delay: number, atFrame: number | null) {
   publishLocal(frames, buttons);
 }
 
+function enterWatch() {
+  mode = "watch";
+  lockstep = null;
+  pendingRemote.length = 0;
+  clearMacros();
+  watchFrame = -1;
+  watchPrimed = false;
+  watchQueue.clear();
+}
+
 function tick() {
+  if (mode === "watch") {
+    watchTick();
+    return;
+  }
   if (mode === "local" && pads) {
     const p0 = peekMacro(0, pads[0]);
     const p1 = peekMacro(1, pads[1]);
@@ -272,6 +344,7 @@ function pump(now: number) {
     due += FRAME_MS;
     ran += 1;
   }
+  flushWatch(now);
   if (now - fpsSince >= 500) {
     const sample = fpsSince ? (fpsFrames * 1000) / (now - fpsSince) : 0;
     fpsShown = fpsShown ? fpsShown * 0.6 + sample * 0.4 : sample;
@@ -319,9 +392,10 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
     clearMacros();
     lockstep = null;
     const net = message.net;
-    if (net && (net.slot === 0 || net.slot === 1) && net.delay >= 1) beginNet(net.slot, net.delay, null);
+    if (message.watch) enterWatch();
+    else if (net && (net.slot === 0 || net.slot === 1) && net.delay >= 1) beginNet(net.slot, net.delay, null);
     else mode = "local";
-    run(0, 0);
+    if (mode !== "watch") run(0, 0);
     if (!looping) loop();
     post({ t: "loaded", rate: core._snes_sample_rate() });
     return;
@@ -330,7 +404,48 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
     mode = "local";
     lockstep = null;
     pendingRemote.length = 0;
+    watchQueue.clear();
     clearMacros();
+    return;
+  }
+  if (message.t === "watch-start") {
+    watching = true;
+    watchDirty = true;
+    return;
+  }
+  if (message.t === "watch-stop") {
+    watching = false;
+    watchDirty = false;
+    watchOut = [];
+    return;
+  }
+  if (message.t === "watch-snapshot") {
+    if (watching) watchDirty = true;
+    return;
+  }
+  if (message.t === "watch-mode") {
+    enterWatch();
+    return;
+  }
+  if (message.t === "watch-load") {
+    if (mode !== "watch") return;
+    if (!loadState(new Uint8Array(message.state))) return;
+    watchFrame = message.frame;
+    watchPrimed = false;
+    for (const frame of [...watchQueue.keys()]) {
+      if (frame < watchFrame) watchQueue.delete(frame);
+    }
+    return;
+  }
+  if (message.t === "watch-frames") {
+    if (mode !== "watch" || !Array.isArray(message.frames)) return;
+    const list = message.frames;
+    for (let i = 0; i + 2 < list.length; i += 3) {
+      const frame = Number(list[i]);
+      if (watchFrame >= 0 && frame < watchFrame) continue;
+      watchQueue.set(frame, [Number(list[i + 1]) & 0xffff, Number(list[i + 2]) & 0xffff]);
+    }
+    if (watchFrame < 0 && watchQueue.size > 600) watchQueue.clear();
     return;
   }
   if (message.t === "super") {

@@ -10,7 +10,7 @@ import {
 } from "../../../packages/net/codec.ts";
 import { delayFromRtt } from "../../../packages/net/lockstep.ts";
 
-export type Role = "host" | "guest";
+export type Role = "host" | "guest" | "spectator";
 
 export interface Snapshot {
   frame: number;
@@ -23,33 +23,60 @@ export interface ChatLine {
   name?: string;
   text: string;
   at: number;
+  slot?: 0 | 1;
 }
 
 export interface Seat {
   here: boolean;
   control: string;
   name: string;
+  id?: string;
 }
+
+export interface Watcher {
+  id: string;
+  name: string;
+}
+
+export interface Roster {
+  host: Seat;
+  guest: Seat;
+  hostSlot: 0 | 1;
+  spectators: Watcher[];
+}
+
+export interface Ban {
+  cid: string;
+  name: string;
+}
+
+export const SEAT_TAKEN = 4001;
+export const KICKED = 4002;
 
 interface SessionOptions {
   code: string;
   role: Role;
   gameId: string;
   sha1: string;
+  cid: string;
   onStatus: (text: string) => void;
   onStart: (slot: 0 | 1, delay: number) => void;
   onRemote: (frames: InputFrame[]) => void;
   onPause: () => void;
   onResume: (snapshot: Snapshot) => void;
   onCheck: (frame: number, hash: number) => void;
-  onClose: (reason: string) => void;
+  onClose: (reason: string, code?: number) => void;
   onReset: (net: { slot: 0 | 1; delay: number } | null) => void;
   onResetAsk: (name: string) => void;
   onResetAnswer: (yes: boolean) => void;
   onChat: (line: ChatLine) => void;
   onChatLog: (lines: ChatLine[]) => void;
   onTyping: (from: Role, on: boolean) => void;
-  onRoster: (roster: { host: Seat; guest: Seat }) => void;
+  onRoster: (roster: Roster) => void;
+  onWatchState: (frame: number, state: Uint8Array) => void;
+  onWatchFrames: (frames: number[]) => void;
+  onSpectatorJoined: () => void;
+  onBans: (list: Ban[]) => void;
   onSaveOffer: (offer: { id: number; name: string; label: string; state: Uint8Array }) => void;
   onSaveAnswer: (id: number, yes: boolean) => void;
   onSwap: (slot: 0 | 1) => void;
@@ -116,6 +143,7 @@ export class OnlineSession {
   private synced = false;
   private swapBusy = false;
   private swapAsked = false;
+  private watchAssembler = new StateAssembler();
 
   constructor(private opts: SessionOptions) {
     this.slot = opts.role === "host" ? 0 : 1;
@@ -130,10 +158,11 @@ export class OnlineSession {
   }
 
   requestSwap(): boolean {
-    if (this.closed) return false;
+    if (this.closed || this.opts.role === "spectator") return false;
     if (!this.peerHere) {
       if (this.opts.role !== "host") return false;
       this.slot = this.slot === 0 ? 1 : 0;
+      this.announceSlot();
       this.opts.onSwap(this.slot);
       return true;
     }
@@ -236,7 +265,63 @@ export class OnlineSession {
   setProfile(control: string, name: string) {
     this.control = control.slice(0, 40);
     this.name = name.slice(0, 20);
-    this.socketSend({ t: "profile", control: this.control, name: this.name });
+    this.socketSend(this.profile());
+  }
+
+  sendWatchState(frame: number, state: Uint8Array) {
+    if (this.opts.role !== "host") return;
+    for (const chunk of encodeStateChunks(frame, 0, fnv(state), state)) {
+      this.socketSend({ t: "watch", bin: bytesToBase64(new Uint8Array(chunk)) });
+    }
+  }
+
+  sendWatchFrames(frames: number[]) {
+    if (this.opts.role !== "host") return;
+    for (let i = 0; i < frames.length; i += 300) {
+      this.socketSend({ t: "watch", data: JSON.stringify({ t: "frames", f: frames.slice(i, i + 300) }) });
+    }
+  }
+
+  kick(id: string) {
+    if (this.opts.role === "host") this.socketSend({ t: "kick", id });
+  }
+
+  requestBans() {
+    if (this.opts.role === "host") this.socketSend({ t: "bans" });
+  }
+
+  unban(cid: string) {
+    if (this.opts.role === "host") this.socketSend({ t: "unban", cid });
+  }
+
+  private profile() {
+    const body: { t: string; control?: string; name: string; slot?: 0 | 1 } = { t: "profile", name: this.name };
+    if (this.opts.role !== "spectator") body.control = this.control;
+    if (this.opts.role === "host") body.slot = this.slot;
+    return body;
+  }
+
+  private announceSlot() {
+    if (this.opts.role === "host") this.socketSend({ t: "profile", slot: this.slot });
+  }
+
+  private onWatch(message: { data?: string; bin?: string }) {
+    if (this.opts.role !== "spectator") return;
+    if (typeof message.bin === "string") {
+      let chunk;
+      try { chunk = decodeStateChunk(base64ToBytes(message.bin)); } catch { return; }
+      if (!chunk) return;
+      const done = this.watchAssembler.push(chunk);
+      if (!done || fnv(done.bytes) !== done.hash) return;
+      this.watchAssembler = new StateAssembler();
+      this.opts.onWatchState(done.frame, done.bytes.slice());
+      return;
+    }
+    if (typeof message.data !== "string") return;
+    try {
+      const body = JSON.parse(message.data) as { t?: string; f?: unknown };
+      if (body.t === "frames" && Array.isArray(body.f)) this.opts.onWatchFrames(body.f.map(Number));
+    } catch { /* lote inválido */ }
   }
 
   close() {
@@ -257,6 +342,7 @@ export class OnlineSession {
       role: this.opts.role,
       game: this.opts.gameId,
       sha1: this.opts.sha1,
+      cid: this.opts.cid,
     });
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const previous = this.ws;
@@ -273,9 +359,13 @@ export class OnlineSession {
       window.clearTimeout(giveUp);
       this.opened = true;
       this.attempts = 0;
-      this.socketSend({ t: "profile", control: this.control, name: this.name });
+      this.socketSend(this.profile());
       this.startPing();
-      this.opts.onStatus(this.opts.role === "host" ? `Sala ${this.opts.code}. Manda o código.` : "Entrou na sala. Conectando…");
+      this.opts.onStatus(
+        this.opts.role === "host" ? `Sala ${this.opts.code}. Manda o código.`
+          : this.opts.role === "spectator" ? `Assistindo a sala ${this.opts.code}.`
+            : "Entrou na sala. Conectando…",
+      );
     };
     socket.onmessage = (event) => {
       const message = JSON.parse(String(event.data)) as {
@@ -287,10 +377,17 @@ export class OnlineSession {
         messages?: ChatLine[];
         host?: Seat;
         guest?: Seat;
+        hostSlot?: number;
+        spectators?: Watcher[];
+        list?: Ban[];
+        slot?: number;
         on?: boolean;
         data?: string;
         bin?: string;
       };
+      if (message.t === "watch") this.onWatch(message);
+      if (message.t === "spectator-joined" && this.opts.role === "host") this.opts.onSpectatorJoined();
+      if (message.t === "bans" && this.opts.role === "host" && Array.isArray(message.list)) this.opts.onBans(message.list);
       if (message.t === "pong" && this.serverPingAt) {
         if (!this.peerHere) this.opts.onPing(performance.now() - this.serverPingAt);
         this.serverPingAt = 0;
@@ -311,11 +408,17 @@ export class OnlineSession {
           name: message.name?.trim() || undefined,
           text: message.text,
           at: message.at ?? Date.now(),
+          slot: message.slot === 0 || message.slot === 1 ? message.slot : undefined,
         });
       }
       if (message.t === "chat-log" && message.messages) this.opts.onChatLog(message.messages);
       if (message.t === "roster" && message.host && message.guest) {
-        this.opts.onRoster({ host: message.host, guest: message.guest });
+        this.opts.onRoster({
+          host: message.host,
+          guest: message.guest,
+          hostSlot: message.hostSlot === 1 ? 1 : 0,
+          spectators: Array.isArray(message.spectators) ? message.spectators : [],
+        });
       }
     };
     socket.onclose = (event) => {
@@ -324,7 +427,7 @@ export class OnlineSession {
       this.peerHere = false;
       const reason = event.reason?.trim();
       if (reason) {
-        this.opts.onClose(reason);
+        this.opts.onClose(reason, event.code);
         this.close();
         return;
       }
@@ -451,6 +554,7 @@ export class OnlineSession {
     if (this.swapBusy || this.closed || !this.linked()) return;
     this.swapBusy = true;
     this.slot = this.slot === 0 ? 1 : 0;
+    this.announceSlot();
     this.epoch += 1;
     this.outgoing.clear();
     this.prepareResync();
