@@ -31,13 +31,9 @@ test("o super do Haggar é frente, diagonal e baixo com ataque", () => {
   assert.equal(steps.includes(RIGHT), false);
 });
 
-test("o super do Guy é frente, baixo e frente com ataque", () => {
-  const steps = superSteps("guy", LEFT);
-  assert.equal(steps[0], LEFT);
-  assert.equal(steps[3], DOWN);
-  assert.equal(steps[6], LEFT | Y);
-  assert.equal(steps.at(-1), LEFT | Y);
-  assert.equal(steps.includes(DOWN | Y), false);
+test("o super do Guy é o mesmo do Haggar: frente, diagonal e baixo com ataque", () => {
+  assert.deepEqual(superSteps("guy", LEFT), superSteps("haggar", LEFT));
+  assert.deepEqual(superSteps("guy", RIGHT), superSteps("haggar", RIGHT));
 });
 
 test("o super da Lucia é baixo, baixo, frente e ataque", () => {

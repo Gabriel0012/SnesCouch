@@ -28,7 +28,6 @@ export function superSteps(fighter: Fighter | "guy", forward: number): number[] 
   const downForward = DOWN | face;
   if (fighter === "lucia") return [...hold(DOWN, 5), ...hold(0, 4), ...hold(DOWN, 5), ...hold(face | Y, 8)];
   if (fighter === "dean") return [...hold(DOWN, 5), ...hold(UP | Y, 8)];
-  if (fighter === "guy") return [...hold(face, 3), ...hold(DOWN, 3), ...hold(face | Y, 8)];
   return [...hold(face, 3), ...hold(downForward, 3), ...hold(DOWN | Y, 8)];
 }
 
