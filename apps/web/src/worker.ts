@@ -44,7 +44,16 @@ let lockstep: Lockstep | null = null;
 let checkpoint: Uint8Array | null = null;
 let checkpointFrame = 0;
 let rom: Uint8Array | null = null;
-let timer = 0;
+let image: ImageData | null = null;
+let looping = false;
+const FRAME_MS = 1000 / 60.0988;
+const EARLY_MS = FRAME_MS / 4;
+const MAX_CATCH_UP = 3;
+let due = 0;
+let lastRaf = 0;
+let fpsFrames = 0;
+let fpsSince = 0;
+let fpsShown = 0;
 const pendingRemote: { frame: number; buttons: number }[] = [];
 const macro: [number[] | null, number[] | null] = [null, null];
 const macroAt = [0, 0];
@@ -94,13 +103,15 @@ function paint() {
   const height = core._snes_height();
   const bytes = core._snes_frame_bytes();
   const ptr = core._snes_framebuffer();
-  const pixels = new Uint8ClampedArray(heap().buffer, ptr, bytes);
   if (canvas.width !== width || canvas.height !== height) {
     canvas.width = width;
     canvas.height = height;
     post({ t: "aspect", w: width, h: height });
   }
-  ctx.putImageData(new ImageData(pixels.slice(), width, height), 0, 0);
+  if (!image || image.width !== width || image.height !== height) image = new ImageData(width, height);
+  const size = Math.min(bytes, image.data.length);
+  image.data.set(new Uint8ClampedArray(heap().buffer, ptr, size));
+  ctx.putImageData(image, 0, 0);
 }
 
 function emitAudio() {
@@ -119,6 +130,7 @@ function run(p0: number, p1: number) {
   core._snes_run_frame();
   paint();
   emitAudio();
+  fpsFrames += 1;
 }
 
 async function frameShot(): Promise<Uint8Array | null> {
@@ -252,9 +264,43 @@ function tick() {
   }
 }
 
+function pump(now: number) {
+  if (due === 0 || now - due > FRAME_MS * 6) due = now;
+  let ran = 0;
+  while (now + EARLY_MS >= due && ran < MAX_CATCH_UP) {
+    tick();
+    due += FRAME_MS;
+    ran += 1;
+  }
+  if (now - fpsSince >= 500) {
+    const sample = fpsSince ? (fpsFrames * 1000) / (now - fpsSince) : 0;
+    fpsShown = fpsShown ? fpsShown * 0.6 + sample * 0.4 : sample;
+    post({ t: "fps", fps: fpsShown });
+    fpsFrames = 0;
+    fpsSince = now;
+  }
+}
+
+const vsync = (self as unknown as { requestAnimationFrame?: (fn: () => void) => number }).requestAnimationFrame?.bind(self);
+
+function onVsync() {
+  lastRaf = performance.now();
+  pump(lastRaf);
+  vsync!(onVsync);
+}
+
+// O rAF do worker para quando a aba some; o timer segue com a partida em rede.
+function fallback() {
+  const now = performance.now();
+  const stale = !vsync || now - lastRaf > 100;
+  if (stale) pump(now);
+  self.setTimeout(fallback, stale ? Math.max(1, due - EARLY_MS - now) : 100);
+}
+
 function loop() {
-  tick();
-  timer = self.setTimeout(loop, 1000 / 60) as unknown as number;
+  looping = true;
+  if (vsync) vsync(onVsync);
+  fallback();
 }
 
 self.onmessage = async (event: MessageEvent<Incoming>) => {
@@ -276,7 +322,7 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
     if (net && (net.slot === 0 || net.slot === 1) && net.delay >= 1) beginNet(net.slot, net.delay, null);
     else mode = "local";
     run(0, 0);
-    if (!timer) loop();
+    if (!looping) loop();
     post({ t: "loaded", rate: core._snes_sample_rate() });
     return;
   }

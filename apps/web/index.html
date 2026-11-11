@@ -47,6 +47,10 @@
             <div id="glass">
               <canvas id="screen" width="256" height="224" hidden></canvas>
               <canvas id="crt" aria-hidden="true"></canvas>
+              <div id="hud" aria-hidden="true">
+                <span id="fps" hidden></span>
+                <span id="ping" hidden></span>
+              </div>
             </div>
             <div id="play-chat" hidden>
               <div id="log" aria-live="polite"></div>
@@ -68,21 +72,14 @@
         <div id="screen-dock">
           <div class="screen-dock-bar">
         <div class="toolbar arrive">
-          <div class="cluster" role="group" aria-label="Tamanho da tela">
-            <button type="button" data-zoom="fit" class="on">Ajustar</button>
-            <button type="button" data-zoom="2">2×</button>
-            <button type="button" data-zoom="3">3×</button>
-            <button type="button" data-zoom="4">4×</button>
-            <button id="crt-toggle" type="button" data-crt aria-pressed="false" aria-label="Filtro CRT">
-              <img src="/crt.png" alt="" width="28" height="28">
-            </button>
-            <button id="fullscreen" type="button" aria-label="Tela cheia"></button>
+          <div class="dock-group" role="group" aria-label="Partida">
+            <button id="saves-open" type="button">Saves</button>
+            <button id="manual-open" type="button">Manual</button>
+            <button id="reset" type="button"><i aria-hidden="true"></i>Reiniciar</button>
             <button id="close-play" class="close-play" type="button" data-close-play><b aria-hidden="true">×</b>Fechar jogo</button>
           </div>
-          <div class="cluster" role="group" aria-label="Enquadramento">
-            <button type="button" data-frame="fit" class="on">Fit</button>
-            <button type="button" data-frame="fill">Fill</button>
-          </div>
+          <span class="toolbar-gap"></span>
+          <div class="dock-group" role="group" aria-label="Som e tela">
           <div class="volume">
             <button id="vol" class="mute-btn" type="button" data-mute aria-pressed="false" aria-label="Silenciar">
               <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -99,15 +96,12 @@
               <span id="vol-readout" data-vol-readout>100%</span>
             </div>
           </div>
-          <span class="toolbar-gap"></span>
-          <div class="cluster quiet" role="group" aria-label="Partida">
-            <button id="reset" type="button"><i aria-hidden="true"></i>Reiniciar</button>
-            <button id="forget" type="button"><i aria-hidden="true"></i>Esquecer ROM</button>
+            <button id="crt-toggle" type="button" data-crt aria-pressed="false">
+              <img src="/crt.png" alt="" width="28" height="28">Filtro CRT
+            </button>
+            <button id="fullscreen" type="button" aria-label="Tela cheia"></button>
+            <button id="settings-open" class="settings-btn" type="button" data-settings-open aria-label="Configurações"></button>
           </div>
-        </div>
-        <div class="saves-line arrive">
-          <button id="saves-open" type="button">Saves</button>
-          <button id="manual-open" type="button">Manual</button>
         </div>
           </div>
         </div>
@@ -116,16 +110,6 @@
           <div class="touch-top">
             <div id="play-menu">
           <div id="play-menu-panel" hidden>
-            <div class="cluster" role="group" aria-label="Tamanho da tela">
-              <button type="button" data-zoom="fit" class="on">Ajustar</button>
-              <button type="button" data-zoom="2">2×</button>
-              <button type="button" data-zoom="3">3×</button>
-              <button type="button" data-zoom="4">4×</button>
-            </div>
-            <div class="cluster" role="group" aria-label="Enquadramento">
-              <button type="button" data-frame="fit" class="on">Fit</button>
-              <button type="button" data-frame="fill">Fill</button>
-            </div>
             <div class="play-menu-volume">
               <button class="mute-btn" type="button" data-mute aria-pressed="false" aria-label="Silenciar">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -140,9 +124,12 @@
               </span>
               <span data-vol-readout>100%</span>
             </div>
-            <button type="button" data-crt aria-pressed="false" aria-label="Filtro CRT">
-              <img src="/crt.png" alt="" width="28" height="28">
-            </button>
+            <div class="play-menu-row">
+              <button type="button" data-crt aria-pressed="false">
+                <img src="/crt.png" alt="" width="28" height="28">Filtro CRT
+              </button>
+              <button class="settings-btn" type="button" data-settings-open aria-label="Configurações"></button>
+            </div>
             <button class="close-play" type="button" data-close-play><b aria-hidden="true">×</b>Fechar jogo</button>
           </div>
           <button id="play-menu-open" type="button" aria-label="Opções" aria-expanded="false" aria-controls="play-menu-panel">
@@ -212,7 +199,6 @@
           <div class="fold-body">
             <h2>Jogadores</h2>
             <ul id="players" class="people"></ul>
-            <button id="swap" type="button" hidden>Trocar jogadores</button>
             <label class="nick">Seu nome
               <input id="nick" maxlength="20" autocomplete="nickname" spellcheck="false" placeholder="Nome na sala" />
             </label>
@@ -294,6 +280,44 @@
         <p id="saves-cloud" class="note" hidden>A conta guarda estes saves. A ROM fica neste navegador.</p>
         <div id="saves-grid"></div>
         <input id="save-import" type="file" accept=".couchsave,application/json" hidden />
+      </div>
+    </div>
+    <div id="settings" hidden>
+      <div class="settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div class="saves-bar">
+          <h2 id="settings-title">Configurações</h2>
+          <button id="settings-close" type="button" aria-label="Fechar">×</button>
+        </div>
+        <h3>Vídeo</h3>
+        <div class="setting-row">
+          <span>Enquadramento</span>
+          <div class="cluster" role="group" aria-label="Enquadramento">
+            <button type="button" data-frame="fit" class="on">Fit</button>
+            <button type="button" data-frame="fill">Fill</button>
+          </div>
+        </div>
+        <div class="setting-row" id="zoom-row">
+          <span>Zoom na tela<small>Só no Fit.</small></span>
+          <div class="cluster" role="group" aria-label="Zoom na tela">
+            <button type="button" data-zoom="fit" class="on">Ajustar</button>
+            <button type="button" data-zoom="2">2×</button>
+            <button type="button" data-zoom="3">3×</button>
+            <button type="button" data-zoom="4">4×</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <span>Mostrar FPS</span>
+          <button class="switch" type="button" data-fps aria-pressed="false" aria-label="Mostrar FPS"><i></i></button>
+        </div>
+        <div class="setting-row">
+          <span>Mostrar ping da sala<small>Indicativo da qualidade de conexão entre os jogadores.</small></span>
+          <button class="switch" type="button" data-ping aria-pressed="false" aria-label="Mostrar ping da sala"><i></i></button>
+        </div>
+        <h3>ROM</h3>
+        <div class="setting-row">
+          <span>Tirar a ROM deste navegador<small>Os saves do jogo saem junto.</small></span>
+          <button id="forget" type="button"><i aria-hidden="true"></i>Esquecer ROM</button>
+        </div>
       </div>
     </div>
     <div id="manual" hidden>

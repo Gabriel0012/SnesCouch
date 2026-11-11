@@ -4,15 +4,27 @@ class SnesAudio extends AudioWorkletProcessor {
     super();
     this.chunks = [];
     this.offset = 0;
-    this.port.onmessage = (event) => this.chunks.push(event.data);
+    this.queued = 0;
+    this.primed = false;
+    this.port.onmessage = (event) => {
+      this.chunks.push(event.data);
+      this.queued += event.data.left.length;
+      while (this.queued > sampleRate * 0.15 && this.chunks.length > 1) {
+        const old = this.chunks.shift();
+        this.queued -= old.left.length - this.offset;
+        this.offset = 0;
+      }
+    };
   }
   process(_inputs, outputs) {
     const left = outputs[0][0];
     const right = outputs[0][1];
     if (!left) return true;
+    if (!this.primed && this.queued >= sampleRate * 0.035) this.primed = true;
     for (let i = 0; i < left.length; i++) {
-      const chunk = this.chunks[0];
+      const chunk = this.primed ? this.chunks[0] : null;
       if (!chunk) {
+        this.primed = false;
         left[i] = 0;
         if (right) right[i] = 0;
         continue;
@@ -20,6 +32,7 @@ class SnesAudio extends AudioWorkletProcessor {
       left[i] = chunk.left[this.offset] || 0;
       if (right) right[i] = chunk.right[this.offset] || 0;
       this.offset += 1;
+      this.queued -= 1;
       if (this.offset >= chunk.left.length) {
         this.chunks.shift();
         this.offset = 0;

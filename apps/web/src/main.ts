@@ -104,7 +104,6 @@ const chatInput = document.querySelector<HTMLInputElement>("#chat-text")!;
 const leaveButton = document.querySelector<HTMLButtonElement>("#leave")!;
 const roomSetup = document.querySelector<HTMLElement>("#room-setup")!;
 const roomHost = document.querySelector<HTMLElement>("#room-host")!;
-const swapButton = document.querySelector<HTMLButtonElement>("#swap")!;
 const confirmBox = document.querySelector<HTMLElement>("#confirm")!;
 const confirmText = document.querySelector<HTMLElement>("#confirm-text")!;
 const confirmYes = document.querySelector<HTMLButtonElement>("#confirm-yes")!;
@@ -158,6 +157,27 @@ function storedCrt(): boolean {
 }
 
 let crtOn = storedCrt();
+
+const FPS_KEY = "snes-couch-fps";
+const fpsBadge = document.querySelector<HTMLElement>("#fps")!;
+
+function storedFps(): boolean {
+  try { return localStorage.getItem(FPS_KEY) === "1"; }
+  catch { return false; }
+}
+
+let fpsOn = storedFps();
+
+const PING_KEY = "snes-couch-ping";
+const pingBadge = document.querySelector<HTMLElement>("#ping")!;
+
+function storedPing(): boolean {
+  try { return localStorage.getItem(PING_KEY) === "1"; }
+  catch { return false; }
+}
+
+let pingOn = storedPing();
+let pingMs: number | null = null;
 
 type ShelfTab = "online" | "local";
 
@@ -513,6 +533,7 @@ function stopPlay(next: "drop" | "welcome" = "drop") {
     reveal(drop, "down");
   }
   hideOverlay();
+  fpsBadge.textContent = "";
   if (transferred) replaceScreen();
   renderSaves();
 }
@@ -704,7 +725,12 @@ function onWorker(message: {
   state?: ArrayBuffer;
   shot?: ArrayBuffer;
   message?: string;
+  fps?: number;
 }) {
+  if (message.t === "fps" && message.fps !== undefined) {
+    if (fpsOn) fpsBadge.textContent = `${Math.round(message.fps)} FPS`;
+    return;
+  }
   if (message.t === "loaded" && message.rate) {
     speaker.setRate(message.rate);
     relaunching = false;
@@ -1068,7 +1094,7 @@ function closeManual() {
   conceal(manual, "modal");
 }
 
-function playerLine(name: string, control: string, state: string, index: number, animate: boolean) {
+function playerLine(name: string, control: string, state: string, index: number, animate: boolean, slot?: 0 | 1) {
   const item = document.createElement("li");
   if (animate) {
     item.classList.add("arrive");
@@ -1076,6 +1102,12 @@ function playerLine(name: string, control: string, state: string, index: number,
   }
   const kind = kindFromLabel(control);
   if (kind) item.append(padIcon(kind));
+  if (slot !== undefined) {
+    const chip = document.createElement("span");
+    chip.className = `slot-chip p${slot + 1}`;
+    chip.textContent = `P${slot + 1}`;
+    item.append(chip);
+  }
   const text = document.createElement("span");
   const who = document.createElement("b");
   who.textContent = name;
@@ -1083,7 +1115,22 @@ function playerLine(name: string, control: string, state: string, index: number,
   meta.textContent = `${control} · ${state}`;
   text.append(who, meta);
   item.append(text);
-  people.append(item);
+  return item;
+}
+
+const swapItem = document.createElement("li");
+swapItem.className = "swap-line";
+const swapButton = document.createElement("button");
+swapButton.type = "button";
+swapButton.className = "swap-btn";
+swapButton.title = "Trocar jogadores";
+swapButton.setAttribute("aria-label", "Trocar jogadores");
+swapButton.addEventListener("click", () => askSwap());
+swapButton.addEventListener("animationend", () => swapButton.classList.remove("spin"));
+swapItem.append(swapButton);
+
+function spinSwap() {
+  swapButton.classList.add("spin");
 }
 
 let peoplePaints = 0;
@@ -1097,10 +1144,11 @@ function renderPeople() {
   peopleKey = key;
   const animate = peoplePaints >= 2;
   peoplePaints += 1;
-  people.replaceChildren();
   if (!session || !roster) {
-    playerLine(roomName() || "Jogador 1", first ?? "Teclado", "nesta máquina", 0, animate);
-    playerLine("Jogador 2", second ?? "Teclado", "nesta máquina", 1, animate);
+    people.replaceChildren(
+      playerLine(roomName() || "Jogador 1", first ?? "Teclado", "nesta máquina", 0, animate),
+      playerLine("Jogador 2", second ?? "Teclado", "nesta máquina", 1, animate),
+    );
     return;
   }
   const you = session.role;
@@ -1110,17 +1158,24 @@ function renderPeople() {
     { slot: hostSlot, seat: roster.host, mine: you === "host", fallback: "Anfitrião", absent: "saiu" },
     { slot: (hostSlot === 0 ? 1 : 0) as 0 | 1, seat: roster.guest, mine: you === "guest", fallback: "Convidado", absent: "aguardando" },
   ].sort((a, b) => a.slot - b.slot);
-  seats.forEach((row, index) => {
+  const [top, bottom] = seats.map((row, index) => {
     const present = row.mine || row.seat.here;
     const state = row.mine ? "você" : row.seat.here ? "na sala" : row.absent;
-    playerLine(
+    return playerLine(
       row.seat.name || row.fallback,
       present ? row.seat.control || "Teclado" : "—",
-      `Jogador ${row.slot + 1} · ${state}`,
+      state,
       index,
       animate,
+      row.slot,
     );
   });
+  for (const child of [...people.children]) {
+    if (child !== swapItem) child.remove();
+  }
+  if (swapItem.parentElement !== people) people.append(swapItem);
+  people.insertBefore(top, swapItem);
+  people.append(bottom);
 }
 
 function when(ms: number) {
@@ -1536,7 +1591,6 @@ async function connect(role: Role, code: string) {
       setChatEnabled(false);
       setRoomCode(null);
       setRoomChrome(false);
-      shown(swapButton, false, "left");
       typingSent = false;
       hideConfirm();
       if (alertMode?.startsWith("reset")) closeAlert();
@@ -1572,10 +1626,16 @@ async function connect(role: Role, code: string) {
     onSwap: () => {
       peopleKey = "";
       renderPeople();
+      spinSwap();
       if (!manual.hidden) fillManual();
       setBanner(mine.playSlot() === 0 ? "Você agora é o jogador 1." : "Você agora é o jogador 2.");
     },
     onSwapBusy: () => setBanner("A troca já está indo."),
+    onPing: (ms) => {
+      if (ms !== null && session !== mine) return;
+      pingMs = ms;
+      paintPing();
+    },
     onSaveAnswer: (id, yes) => {
       if (session !== mine || !saveDialog || saveDialog.kind === "offer" || saveDialog.id !== id) return;
       if (saveDialog.kind === "incoming") {
@@ -1599,7 +1659,6 @@ async function connect(role: Role, code: string) {
   session = mine;
   setRoomCode(code);
   setRoomChrome(true);
-  shown(swapButton, true, "left");
   const name = roomName();
   mine.setProfile(localControl(), name);
   setChatEnabled(true);
@@ -1610,7 +1669,6 @@ async function connect(role: Role, code: string) {
   } catch (error) {
     if (session === mine) session = null;
     setRoomChrome(false);
-    shown(swapButton, false, "left");
     setChatEnabled(false);
     setRoomCode(null);
     if (account && previousRoom) void queueRoom(null);
@@ -1674,8 +1732,10 @@ function applyZoom() {
   screen.classList.add(!stretch && zoom !== "fit" ? `z${zoom}` : "fit");
   picture.classList.toggle("fill", stretch);
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-zoom]")) {
-    button.classList.toggle("on", button.dataset.zoom === zoom);
+    button.classList.toggle("on", !stretch && button.dataset.zoom === zoom);
+    button.disabled = stretch;
   }
+  document.querySelector("#zoom-row")?.classList.toggle("off", stretch);
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-frame]")) {
     button.classList.toggle("on", button.dataset.frame === frame);
   }
@@ -1695,6 +1755,38 @@ function paintCrt() {
 
 function rememberCrt() {
   try { localStorage.setItem(CRT_KEY, crtOn ? "1" : "0"); }
+  catch { /* a escolha vale só nesta visita */ }
+}
+
+function paintFps() {
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-fps]")) {
+    button.classList.toggle("on", fpsOn);
+    button.setAttribute("aria-pressed", fpsOn ? "true" : "false");
+  }
+  fpsBadge.hidden = !fpsOn;
+}
+
+function rememberFps() {
+  try { localStorage.setItem(FPS_KEY, fpsOn ? "1" : "0"); }
+  catch { /* a escolha vale só nesta visita */ }
+}
+
+function paintPing() {
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-ping]")) {
+    button.classList.toggle("on", pingOn);
+    button.setAttribute("aria-pressed", pingOn ? "true" : "false");
+  }
+  pingBadge.hidden = !pingOn || pingMs === null;
+  if (pingMs === null) return;
+  const ms = Math.round(pingMs);
+  pingBadge.textContent = `${ms} ms`;
+  pingBadge.classList.toggle("good", ms <= 80);
+  pingBadge.classList.toggle("mid", ms > 80 && ms <= 110);
+  pingBadge.classList.toggle("bad", ms > 110);
+}
+
+function rememberPing() {
+  try { localStorage.setItem(PING_KEY, pingOn ? "1" : "0"); }
   catch { /* a escolha vale só nesta visita */ }
 }
 
@@ -2615,7 +2707,6 @@ function leaveRoom() {
   setChatEnabled(false);
   setRoomCode(null);
   setRoomChrome(false);
-  shown(swapButton, false, "left");
   typingSent = false;
   hideConfirm();
   clearChat();
@@ -2630,7 +2721,7 @@ function leaveRoom() {
 
 leaveButton.addEventListener("click", () => leaveRoom());
 
-swapButton.addEventListener("click", () => {
+function askSwap() {
   if (!session?.linked()) {
     setBanner("A partida ainda não ligou.");
     return;
@@ -2639,8 +2730,9 @@ swapButton.addEventListener("click", () => {
     setBanner("A troca já está indo.");
     return;
   }
+  spinSwap();
   if (session.role === "guest") setBanner("Pedindo a troca de jogadores…");
-});
+}
 
 function roomDrawer(): boolean {
   return window.matchMedia("(max-width: 1080px)").matches;
@@ -2706,6 +2798,7 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "Escape" && !alertBox.hidden) dismissAlert();
   else if (event.code === "Escape" && !libraryEdit.hidden) closeLibraryEdit();
   else if (event.code === "Escape" && !savesModal.hidden) closeSaves();
+  else if (event.code === "Escape" && !settings.hidden) closeSettings();
   else if (event.code === "Escape" && !manual.hidden) closeManual();
   else if (event.code === "Escape" && !playChat.hidden) {
     event.preventDefault();
@@ -2773,7 +2866,7 @@ window.addEventListener("keydown", (event) => {
     const tag = target.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON" || tag === "A" || tag === "SUMMARY" || target.isContentEditable) return;
   }
-  if (!manual.hidden || !alertBox.hidden || !savesModal.hidden || !libraryEdit.hidden) return;
+  if (!manual.hidden || !alertBox.hidden || !savesModal.hidden || !settings.hidden || !libraryEdit.hidden) return;
   const tour = document.querySelector("#tour");
   if (tour instanceof HTMLElement && !tour.hidden) return;
   if (event.code === "KeyC") {
@@ -2832,6 +2925,45 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-crt]"))
     rememberCrt();
   });
 }
+
+paintFps();
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-fps]")) {
+  button.addEventListener("click", () => {
+    fpsOn = !fpsOn;
+    paintFps();
+    rememberFps();
+  });
+}
+
+paintPing();
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-ping]")) {
+  button.addEventListener("click", () => {
+    pingOn = !pingOn;
+    paintPing();
+    rememberPing();
+  });
+}
+
+const settings = document.querySelector<HTMLElement>("#settings")!;
+
+function openSettings() {
+  setPlayMenu(false);
+  reveal(settings, "modal");
+  document.querySelector<HTMLButtonElement>("#settings-close")?.focus();
+}
+
+function closeSettings(immediate = false) {
+  if (immediate) settings.hidden = true;
+  else conceal(settings, "modal");
+}
+
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-settings-open]")) {
+  button.addEventListener("click", () => openSettings());
+}
+document.querySelector("#settings-close")!.addEventListener("click", () => closeSettings());
+settings.addEventListener("click", (event) => {
+  if (event.target === settings) closeSettings();
+});
 
 document.querySelector("#banner-close")!.addEventListener("click", () => setBanner(""));
 
@@ -2911,7 +3043,7 @@ document.addEventListener("pointerdown", (event) => {
   setPlayMenu(false);
 });
 
-const stageModals = ["#banner", "#library-edit", "#alert", "#saves-modal", "#manual"].map((selector) => {
+const stageModals = ["#banner", "#library-edit", "#alert", "#saves-modal", "#settings", "#manual"].map((selector) => {
   const node = document.querySelector<HTMLElement>(selector)!;
   return { node, parent: node.parentElement!, next: node.nextSibling };
 });
@@ -3102,6 +3234,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-close-p
 
 document.querySelector("#forget")!.addEventListener("click", () => {
   if (alertMode) return;
+  closeSettings(true);
   if (!ready.has(selected.id)) {
     setBanner("Essa ROM não está neste navegador.");
     return;

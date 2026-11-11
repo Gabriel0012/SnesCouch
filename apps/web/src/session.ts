@@ -54,6 +54,7 @@ interface SessionOptions {
   onSaveAnswer: (id: number, yes: boolean) => void;
   onSwap: (slot: 0 | 1) => void;
   onSwapBusy: () => void;
+  onPing: (ms: number | null) => void;
   checkpoint: () => Promise<Snapshot>;
 }
 
@@ -98,6 +99,7 @@ export class OnlineSession {
   private awaitingSync = false;
   private resumed = false;
   private pingAt = 0;
+  private serverPingAt = 0;
   private epoch = 0;
   private saveSeq = 0;
   private saveAssembler = new StateAssembler();
@@ -240,6 +242,7 @@ export class OnlineSession {
     window.clearInterval(this.resendTimer);
     window.clearTimeout(this.syncTimer);
     this.ws?.close();
+    this.opts.onPing(null);
   }
 
   private connectSocket() {
@@ -264,6 +267,7 @@ export class OnlineSession {
       this.opened = true;
       this.attempts = 0;
       this.socketSend({ t: "profile", control: this.control, name: this.name });
+      this.startPing();
       this.opts.onStatus(this.opts.role === "host" ? `Sala ${this.opts.code}. Manda o código.` : "Entrou na sala. Conectando…");
     };
     socket.onmessage = (event) => {
@@ -280,6 +284,10 @@ export class OnlineSession {
         data?: string;
         bin?: string;
       };
+      if (message.t === "pong" && this.serverPingAt) {
+        if (!this.peerHere) this.opts.onPing(performance.now() - this.serverPingAt);
+        this.serverPingAt = 0;
+      }
       if (message.t === "peer") this.onPeer();
       if (message.t === "peer-left") this.onPeerLeft();
       if (message.t === "relay") {
@@ -339,6 +347,21 @@ export class OnlineSession {
     };
   }
 
+  private startPing() {
+    window.clearInterval(this.pingTimer);
+    const tick = () => {
+      if (this.peerHere) {
+        this.sendJson({ t: "ping", ms: performance.now() });
+        return;
+      }
+      if (this.ws?.readyState !== WebSocket.OPEN) return;
+      this.serverPingAt = performance.now();
+      this.socketSend({ t: "ping" });
+    };
+    tick();
+    this.pingTimer = window.setInterval(tick, 2000);
+  }
+
   private socketSend(message: unknown) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(message));
   }
@@ -361,6 +384,7 @@ export class OnlineSession {
     this.assembler = new StateAssembler();
     window.clearInterval(this.resendTimer);
     this.resendTimer = window.setInterval(() => this.flushInputs(), 50);
+    this.startPing();
     this.reconnectUntil = 0;
     this.opts.onPause();
     this.opts.onStatus("Alinhando a partida…");
@@ -535,6 +559,10 @@ export class OnlineSession {
         this.opts.onReset({ slot: this.slot, delay });
       }
       if (message.t === "ping") this.sendJson({ t: "pong", ms: message.ms });
+      if (message.t === "pong" && typeof message.ms === "number") {
+        const rtt = performance.now() - message.ms;
+        if (rtt >= 0 && rtt < 60000) this.opts.onPing(rtt);
+      }
       if (message.t === "pong" && this.opts.role === "host" && !this.started) {
         void this.align(delayFromRtt(performance.now() - this.pingAt));
       }
@@ -612,6 +640,7 @@ export class OnlineSession {
     this.swapAsked = false;
     this.awaitingSync = false;
     this.resumed = false;
+    this.startPing();
     this.opts.onPause();
     this.opts.onStatus("O outro lado saiu. A sala fica aberta por um instante.");
     this.reconnectUntil = performance.now() + 15000;
