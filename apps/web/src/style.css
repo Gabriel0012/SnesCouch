@@ -1998,11 +1998,7 @@ button.status-line:active { transform: none; box-shadow: none; }
   box-shadow: inset -3px -3px 0 var(--sink), inset 3px 3px 0 var(--lift), 3px 3px 0 #000;
 }
 .swap-btn:active { box-shadow: inset -3px -3px 0 var(--sink), inset 3px 3px 0 var(--lift); }
-.swap-btn.spin { animation: swap-spin 0.48s steps(12, end); }
-@keyframes swap-spin {
-  from { rotate: 0deg; }
-  to { rotate: 360deg; }
-}
+.people li[data-seat] { position: relative; }
 .swap-btn::before {
   content: "";
   width: 1.1rem;
@@ -2573,7 +2569,7 @@ footer.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; ani
   #library-edit.step-out.move-modal .library-card,
   #tour.step-in.move-modal .tour-sheet,
   #tour.step-out.move-modal .tour-sheet,
-  .volume-pop, #panel, .play-line.blink, .swap-btn.spin {
+  .volume-pop, #panel, .play-line.blink {
     animation: none !important;
     transition: none !important;
   }

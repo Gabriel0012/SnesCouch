@@ -130,7 +130,14 @@ export class OnlineSession {
   }
 
   requestSwap(): boolean {
-    if (this.closed || !this.linked()) return false;
+    if (this.closed) return false;
+    if (!this.peerHere) {
+      if (this.opts.role !== "host") return false;
+      this.slot = this.slot === 0 ? 1 : 0;
+      this.opts.onSwap(this.slot);
+      return true;
+    }
+    if (!this.linked()) return false;
     if (this.opts.role === "host") {
       if (this.swapBusy) return false;
       this.beginSwap();
@@ -386,6 +393,7 @@ export class OnlineSession {
     this.resendTimer = window.setInterval(() => this.flushInputs(), 50);
     this.startPing();
     this.reconnectUntil = 0;
+    if (this.opts.role === "host") this.sendJson({ t: "seat", slot: this.slot });
     this.opts.onPause();
     this.opts.onStatus("Alinhando a partida…");
     if (!this.started) {
@@ -518,6 +526,13 @@ export class OnlineSession {
       if (message.t === "swap-busy" && this.opts.role === "guest") {
         this.swapAsked = false;
         this.opts.onSwapBusy();
+      }
+      if (message.t === "seat" && this.opts.role === "guest" && (message.slot === 0 || message.slot === 1)) {
+        const slot: 0 | 1 = message.slot === 0 ? 1 : 0;
+        if (slot !== this.slot) {
+          this.slot = slot;
+          this.opts.onSwap(this.slot);
+        }
       }
       if (message.t === "swap" && this.opts.role === "guest" && (message.slot === 0 || message.slot === 1)) {
         this.swapAsked = false;

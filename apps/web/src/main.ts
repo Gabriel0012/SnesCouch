@@ -1046,7 +1046,7 @@ let shownPads = "";
 
 function padKey(): string {
   const [first, second] = connectedPads();
-  const who = session ? `sala:${mySlot()}` : "local";
+  const who = session ? `sala:${mySlot()}` : `local:${localSwap}`;
   return `${who}:${selected.id}:${first?.id ?? ""}:${second?.id ?? ""}`;
 }
 
@@ -1057,7 +1057,9 @@ function fillManual() {
   const mine = mySlot();
   const players = online
     ? [{ slot: mine, pad: pads[0], keys: 0 as const }]
-    : ([0, 1] as const).map((index) => ({ slot: index, pad: pads[index], keys: keyboardScheme(index, pads) }));
+    : ([0, 1] as const)
+      .map((index) => ({ slot: (localSwap ? 1 - index : index) as 0 | 1, pad: pads[index], keys: keyboardScheme(index, pads) }))
+      .sort((a, b) => a.slot - b.slot);
   const note = [selected.title + "."];
   if (plainGame()) note.push("Partida só nesta máquina. Os controles ligados entram nos dois jogadores.");
   if (online) note.push("Na sala, este manual mostra só o controle desta máquina.");
@@ -1094,20 +1096,19 @@ function closeManual() {
   conceal(manual, "modal");
 }
 
-function playerLine(name: string, control: string, state: string, index: number, animate: boolean, slot?: 0 | 1) {
+function playerLine(seat: string, name: string, control: string, state: string, index: number, animate: boolean, slot: 0 | 1) {
   const item = document.createElement("li");
+  item.dataset.seat = seat;
   if (animate) {
     item.classList.add("arrive");
     item.style.animationDelay = `${index * 40}ms`;
   }
   const kind = kindFromLabel(control);
   if (kind) item.append(padIcon(kind));
-  if (slot !== undefined) {
-    const chip = document.createElement("span");
-    chip.className = `slot-chip p${slot + 1}`;
-    chip.textContent = `P${slot + 1}`;
-    item.append(chip);
-  }
+  const chip = document.createElement("span");
+  chip.className = `slot-chip p${slot + 1}`;
+  chip.textContent = `P${slot + 1}`;
+  item.append(chip);
   const text = document.createElement("span");
   const who = document.createElement("b");
   who.textContent = name;
@@ -1126,42 +1127,32 @@ swapButton.className = "swap-btn";
 swapButton.title = "Trocar jogadores";
 swapButton.setAttribute("aria-label", "Trocar jogadores");
 swapButton.addEventListener("click", () => askSwap());
-swapButton.addEventListener("animationend", () => swapButton.classList.remove("spin"));
 swapItem.append(swapButton);
 
-function spinSwap() {
-  swapButton.classList.add("spin");
-}
-
+let localSwap = false;
 let peoplePaints = 0;
 
-function renderPeople() {
-  const [first, second] = padStatus();
-  const key = session && roster
-    ? `sala:${session.role}:${session.playSlot()}:${roster.host.here}:${roster.host.control}:${roster.host.name}:${roster.guest.here}:${roster.guest.control}:${roster.guest.name}`
-    : `local:${roomName()}:${first ?? ""}:${second ?? ""}`;
-  if (key === peopleKey) return;
-  peopleKey = key;
-  const animate = peoplePaints >= 2;
-  peoplePaints += 1;
+function seatRows(animate: boolean): [HTMLLIElement, HTMLLIElement] {
   if (!session || !roster) {
-    people.replaceChildren(
-      playerLine(roomName() || "Jogador 1", first ?? "Teclado", "nesta máquina", 0, animate),
-      playerLine("Jogador 2", second ?? "Teclado", "nesta máquina", 1, animate),
-    );
-    return;
+    const [first, second] = padStatus();
+    const slotA: 0 | 1 = localSwap ? 1 : 0;
+    const slotB: 0 | 1 = localSwap ? 0 : 1;
+    const a = playerLine("a", roomName() || `Jogador ${slotA + 1}`, first ?? "Teclado", "nesta máquina", slotA, animate, slotA);
+    const b = playerLine("b", `Jogador ${slotB + 1}`, second ?? "Teclado", "nesta máquina", slotB, animate, slotB);
+    return localSwap ? [b, a] : [a, b];
   }
   const you = session.role;
   const mine = session.playSlot();
   const hostSlot: 0 | 1 = you === "host" ? mine : (mine === 0 ? 1 : 0);
   const seats = [
-    { slot: hostSlot, seat: roster.host, mine: you === "host", fallback: "Anfitrião", absent: "saiu" },
-    { slot: (hostSlot === 0 ? 1 : 0) as 0 | 1, seat: roster.guest, mine: you === "guest", fallback: "Convidado", absent: "aguardando" },
+    { id: "host", slot: hostSlot, seat: roster.host, mine: you === "host", fallback: "Anfitrião", absent: "saiu" },
+    { id: "guest", slot: (hostSlot === 0 ? 1 : 0) as 0 | 1, seat: roster.guest, mine: you === "guest", fallback: "Convidado", absent: "aguardando" },
   ].sort((a, b) => a.slot - b.slot);
   const [top, bottom] = seats.map((row, index) => {
     const present = row.mine || row.seat.here;
     const state = row.mine ? "você" : row.seat.here ? "na sala" : row.absent;
     return playerLine(
+      row.id,
       row.seat.name || row.fallback,
       present ? row.seat.control || "Teclado" : "—",
       state,
@@ -1170,12 +1161,45 @@ function renderPeople() {
       row.slot,
     );
   });
+  return [top, bottom];
+}
+
+function renderPeople() {
+  const [first, second] = padStatus();
+  const key = session && roster
+    ? `sala:${session.role}:${session.playSlot()}:${roster.host.here}:${roster.host.control}:${roster.host.name}:${roster.guest.here}:${roster.guest.control}:${roster.guest.name}`
+    : `local:${localSwap}:${roomName()}:${first ?? ""}:${second ?? ""}`;
+  if (key === peopleKey) return;
+  peopleKey = key;
+  const animate = peoplePaints >= 2;
+  peoplePaints += 1;
+  const before = new Map<string, number>();
+  for (const row of people.querySelectorAll<HTMLElement>("li[data-seat]")) {
+    before.set(row.dataset.seat ?? "", row.getBoundingClientRect().top);
+  }
+  const [top, bottom] = seatRows(animate);
   for (const child of [...people.children]) {
     if (child !== swapItem) child.remove();
   }
   if (swapItem.parentElement !== people) people.append(swapItem);
   people.insertBefore(top, swapItem);
   people.append(bottom);
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  for (const [row, lift] of [[top, -1], [bottom, 1]] as const) {
+    const was = before.get(row.dataset.seat ?? "");
+    if (was === undefined) continue;
+    const dy = was - row.getBoundingClientRect().top;
+    if (Math.abs(dy) < 1) continue;
+    row.classList.remove("arrive");
+    row.style.animationDelay = "";
+    const side = lift * 10;
+    row.animate([
+      { transform: `translate(0, ${dy}px)`, zIndex: 2 },
+      { transform: `translate(${side}px, ${dy}px) scale(1.06)`, filter: "drop-shadow(4px 4px 0 #000)", zIndex: 2, offset: 0.25 },
+      { transform: `translate(${side}px, 0) scale(1.06)`, filter: "drop-shadow(4px 4px 0 #000)", zIndex: 2, offset: 0.75 },
+      { transform: "translate(0, 0)", zIndex: 2 },
+    ], { duration: 560, easing: "ease-in-out" });
+  }
 }
 
 function when(ms: number) {
@@ -1626,7 +1650,6 @@ async function connect(role: Role, code: string) {
     onSwap: () => {
       peopleKey = "";
       renderPeople();
-      spinSwap();
       if (!manual.hidden) fillManual();
       setBanner(mine.playSlot() === 0 ? "Você agora é o jogador 1." : "Você agora é o jogador 2.");
     },
@@ -2722,16 +2745,18 @@ function leaveRoom() {
 leaveButton.addEventListener("click", () => leaveRoom());
 
 function askSwap() {
-  if (!session?.linked()) {
-    setBanner("A partida ainda não ligou.");
+  if (!session) {
+    localSwap = !localSwap;
+    renderPeople();
     return;
   }
   if (!session.requestSwap()) {
-    setBanner("A troca já está indo.");
+    if (session.linked()) setBanner("A troca já está indo.");
+    else if (session.role === "guest") setBanner("Só o anfitrião troca enquanto o outro lado não está na sala.");
+    else setBanner("A partida ainda não ligou.");
     return;
   }
-  spinSwap();
-  if (session.role === "guest") setBanner("Pedindo a troca de jogadores…");
+  if (session.role === "guest" && session.linked()) setBanner("Pedindo a troca de jogadores…");
 }
 
 function roomDrawer(): boolean {
@@ -3314,10 +3339,8 @@ function writePads(p0: number, p1: number) {
   pads[1] = p1;
 }
 
-function pollSupers(padsNow: [number, number], mode: "local" | "online") {
+function pollSupers(padsNow: [number, number], pressed: [boolean, boolean]) {
   if (loadedGame?.id !== "final-fight-3" || !worker) return;
-  const [first, second] = readSupers(mode);
-  const pressed: [boolean, boolean] = session ? [first, false] : [first, second];
   for (const port of [0, 1] as const) {
     if (padsNow[port] & LEFT) facing[port] = LEFT;
     else if (padsNow[port] & RIGHT) facing[port] = RIGHT;
@@ -3325,7 +3348,7 @@ function pollSupers(padsNow: [number, number], mode: "local" | "online") {
       if (padsNow[port] & SELECT) {
         const next = (FIGHTERS.indexOf(fighters[port]) + 1) % FIGHTERS.length;
         fighters[port] = FIGHTERS[next];
-        const player = session && port === 0 ? mySlot() + 1 : port + 1;
+        const player = session?.linked() ? mySlot() + 1 : port + 1;
         setBanner(`Super do jogador ${player}: ${fighterLabel(fighters[port])}.`);
       } else {
         const forward = padsNow[port] & LEFT ? LEFT : padsNow[port] & RIGHT ? RIGHT : facing[port];
@@ -3336,9 +3359,9 @@ function pollSupers(padsNow: [number, number], mode: "local" | "online") {
   }
 }
 
-function pollSpecials(padsNow: [number, number], mode: "local" | "online") {
+function pollSpecials(padsNow: [number, number]) {
   if (loadedGame?.id !== "final-fight-3" || !worker) return;
-  const pressed: [boolean, boolean] = [(padsNow[0] & X) !== 0, mode === "online" ? false : (padsNow[1] & X) !== 0];
+  const pressed: [boolean, boolean] = [(padsNow[0] & X) !== 0, (padsNow[1] & X) !== 0];
   for (const port of [0, 1] as const) {
     if (pressed[port] && !specialDown[port]) {
       const forward = padsNow[port] & LEFT ? LEFT : padsNow[port] & RIGHT ? RIGHT : facing[port];
@@ -3371,8 +3394,13 @@ let heldControls = 0;
 
 function pump() {
   const mode = session ? "online" : "local";
-  const padsNow = readPads(mode, loadedGame?.id ?? "");
-  const supers = readSupers(mode);
+  let padsNow = readPads(mode, loadedGame?.id ?? "");
+  let supers = readSupers(mode);
+  const swapped = session ? !session.linked() && session.playSlot() === 1 : localSwap;
+  if (swapped) {
+    padsNow = [padsNow[1], padsNow[0]];
+    supers = [supers[1], supers[0]];
+  }
   const bits = padsNow[0] | padsNow[1] | (supers[0] ? 1 << 14 : 0) | (supers[1] ? 1 << 15 : 0);
   const fresh = bits & ~heldControls;
   heldControls = bits;
@@ -3380,8 +3408,8 @@ function pump() {
   if (fresh && composing()) leaveComposer();
   const fight = loadedGame?.id === "final-fight-3";
   writePads(fight ? padsNow[0] & ~X : padsNow[0], fight ? padsNow[1] & ~X : padsNow[1]);
-  pollSupers(padsNow, mode);
-  pollSpecials(padsNow, mode);
+  pollSupers(padsNow, supers);
+  pollSpecials(padsNow);
   if (session) publishProfile();
   renderPeople();
   if (!manual.hidden && padKey() !== shownPads) fillManual();
