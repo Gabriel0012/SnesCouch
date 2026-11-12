@@ -43,6 +43,7 @@ import { controlGuide, keyboardScheme, padLabel } from "./pads.ts";
 import { games, isLibraryGame, localGame, localRomId, looksLikeSnesRom, matchRom, sha1Of, titleFromFile, type Game, type LibraryGame } from "./rom.ts";
 import { decodeSaveFile, encodeSaveFile } from "./save-file.ts";
 import { decodeReplay, encodeReplay, replayFileName } from "./replay-file.ts";
+import { canPickRomFolder, chooseRomFolder, findRomInFolder, romFolder } from "./rom-folder.ts";
 import {
   canPickFolder,
   chooseFolder,
@@ -340,18 +341,25 @@ function setDelay(text: string) {
   delayLabel.classList.add("arrive");
 }
 
-const photoCovers = new Set([
-  "final-fight-3",
-  "pocky-rocky-2",
-  "mighty-morphin-power-rangers-the-movie",
-  "king-of-dragons",
-  "super-mario-world",
-  "donkey-kong-country",
-  "donkey-kong-country-3",
-]);
+const coverExtensions: Record<string, string> = {
+  "final-fight-3": "jpg",
+  "pocky-rocky-2": "jpg",
+  "mighty-morphin-power-rangers-the-movie": "jpg",
+  "king-of-dragons": "jpg",
+  "super-mario-world": "jpg",
+  "donkey-kong-country": "jpg",
+  "donkey-kong-country-3": "jpg",
+  "contra-iv-the-alien-wars": "jpg",
+  "legend-of-the-mystical-ninja": "jpg",
+  "new-super-mario-land": "jpg",
+  "run-saber": "jpg",
+  "secret-of-mana": "jpg",
+  "super-double-dragon": "jpg",
+  "teenage-mutant-ninja-turtles-iv-turtles-in-time": "jpg",
+};
 
 function coverOf(id: string) {
-  return `/covers/${id}.${photoCovers.has(id) ? "jpg" : "svg"}`;
+  return `/covers/${id}.${coverExtensions[id] ?? "svg"}`;
 }
 
 function plainGame(game: Game = selected): boolean {
@@ -620,32 +628,39 @@ async function openStored(game: Game) {
   }
   if (loadedGame?.id === game.id) return;
   const record = await loadRom(game.id);
-  if (!record) {
-    stopPlay();
-    roomState.textContent = `${game.title}. Solte a ROM uma vez. Ela fica neste navegador.`;
-    return;
-  }
-  if (isLibraryGame(game)) {
+  if (record && isLibraryGame(game)) {
     if (!looksLikeSnesRom(record.bytes.length)) {
       await forgetRom(game.id);
       ready.delete(game.id);
       if (selected.id === game.id) selected = localGame;
       await refreshLibrary();
-      setBanner("A ROM gravada não parece de Super Nintendo. Solta o arquivo de novo.", "error");
+      setBanner("A ROM gravada n?o parece de Super Nintendo. Solta o arquivo de novo.", "error");
       return;
     }
     await boot(game, record.bytes);
     return;
   }
-  const matched = await matchRom(record.bytes);
-  if (!matched || matched.game.id !== game.id) {
+  if (record) {
+    const matched = await matchRom(record.bytes);
+    if (matched?.game.id === game.id) {
+      await boot(matched.game, matched.rom);
+      return;
+    }
     await forgetRom(game.id);
     ready.delete(game.id);
     renderGames();
-    setBanner("A ROM gravada não confere mais. Solta o arquivo de novo.", "error");
+  }
+  roomState.textContent = game.title + ". Procurando a ROM na pasta escolhida?";
+  const fromFolder = await findRomInFolder(game);
+  if (fromFolder) {
+    await boot(game, fromFolder);
     return;
   }
-  await boot(matched.game, matched.rom);
+  stopPlay();
+  const folder = await romFolder();
+  roomState.textContent = folder
+    ? game.title + ". N?o encontrei uma ROM com o SHA-1 correto na pasta escolhida. Solte o arquivo para abrir."
+    : game.title + ". Solte a ROM uma vez, ou escolha uma pasta nas configura??es.";
 }
 
 async function keepCatalog(game: Game, rom: Uint8Array) {
@@ -3722,6 +3737,7 @@ const settings = document.querySelector<HTMLElement>("#settings")!;
 
 function openSettings() {
   setPlayMenu(false);
+  void paintRomFolder();
   reveal(settings, "modal");
   document.querySelector<HTMLButtonElement>("#settings-close")?.focus();
 }
@@ -3734,6 +3750,30 @@ function closeSettings(immediate = false) {
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-settings-open]")) {
   button.addEventListener("click", () => openSettings());
 }
+const romFolderLabel = document.querySelector<HTMLElement>("#rom-folder")!;
+const romFolderOpen = document.querySelector<HTMLButtonElement>("#rom-folder-open")!;
+
+async function paintRomFolder() {
+  const supported = canPickRomFolder();
+  romFolderOpen.disabled = !supported;
+  if (!supported) {
+    romFolderLabel.textContent = "Escolha de pasta disponível no Chrome e Edge para computador.";
+    return;
+  }
+  const folder = await romFolder();
+  romFolderLabel.textContent = folder
+    ? `${folder.name}. A busca inclui subpastas.`
+    : "Nenhuma pasta escolhida. A busca inclui subpastas.";
+}
+
+romFolderOpen.addEventListener("click", () => {
+  void (async () => {
+    const folder = await chooseRomFolder();
+    await paintRomFolder();
+    if (!folder) setBanner("Não foi possível acessar essa pasta. Escolha uma pasta e permita a leitura.", "warn");
+  })();
+});
+
 const bansModal = document.querySelector<HTMLElement>("#bans-modal")!;
 
 function closeBans() {

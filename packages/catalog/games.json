@@ -1,6 +1,14 @@
 {
   "games": [
     {
+      "id": "contra-iv-the-alien-wars",
+      "title": "Contra IV: The Alien Wars",
+      "region": "USA",
+      "sha1": "daba9ebb5162fc4631d663ab5681c2518f6311e5",
+      "bytes": 4194304,
+      "players": 2
+    },
+    {
       "id": "final-fight-3",
       "title": "Final Fight 3",
       "region": "USA",
@@ -33,11 +41,27 @@
       "players": 2
     },
     {
+      "id": "legend-of-the-mystical-ninja",
+      "title": "The Legend of the Mystical Ninja",
+      "region": "USA",
+      "sha1": "e7db9b1220d66bc8665fe2761ac396dc28bfd88c",
+      "bytes": 1048576,
+      "players": 2
+    },
+    {
       "id": "super-mario-world",
       "title": "Super Mario World",
       "region": "USA",
       "sha1": "6b47bb75d16514b6a476aa0c73a683a2a4c18765",
       "bytes": 524288,
+      "players": 2
+    },
+    {
+      "id": "new-super-mario-land",
+      "title": "New Super Mario Land",
+      "region": "USA",
+      "sha1": "4db4cd2e68badb558562e0b1030a169eccd9ff89",
+      "bytes": 2097152,
       "players": 2
     },
     {
@@ -54,6 +78,38 @@
       "region": "USA",
       "sha1": "d737e90d91dba8620fd5c2985eb6ff2cda7f23f9",
       "bytes": 4194304,
+      "players": 2
+    },
+    {
+      "id": "run-saber",
+      "title": "Run Saber",
+      "region": "USA",
+      "sha1": "5fba73777acdd5b8bdb6ef429effcf6034c88072",
+      "bytes": 1048576,
+      "players": 2
+    },
+    {
+      "id": "secret-of-mana",
+      "title": "Secret of Mana",
+      "region": "USA",
+      "sha1": "8133041a363e3cc68cedef40b49b6d20d03c505d",
+      "bytes": 2097152,
+      "players": 2
+    },
+    {
+      "id": "super-double-dragon",
+      "title": "Super Double Dragon",
+      "region": "USA",
+      "sha1": "5dcaee58ba92e620055e1cee7f1c84da4e22a61a",
+      "bytes": 1048576,
+      "players": 2
+    },
+    {
+      "id": "teenage-mutant-ninja-turtles-iv-turtles-in-time",
+      "title": "Teenage Mutant Ninja Turtles IV: Turtles in Time",
+      "region": "USA",
+      "sha1": "4f8fc0f45023e0339e501054b253c33f479a001a",
+      "bytes": 1048576,
       "players": 2
     }
   ]
