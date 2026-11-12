@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "concurrently -n web,sala -c cyan,yellow \"npm run dev -w @snes-couch/web\" \"npm run dev -w @snes-couch/signal\"",
     "dev:lan": "concurrently -n web,sala -c cyan,yellow \"npm run dev:lan -w @snes-couch/web\" \"npm run dev -w @snes-couch/signal\"",
-    "test": "node --test --test-timeout=120000 packages/net/lockstep.test.ts packages/net/codec.test.ts test/pads.test.ts test/touch.test.ts test/supers.test.ts test/actions.test.ts test/account.test.ts test/presence.test.ts test/save-file.test.ts test/test-game.mjs test/determinism.mjs test/room.mjs",
+    "test": "node --test --test-timeout=120000 packages/net/lockstep.test.ts packages/net/codec.test.ts test/pads.test.ts test/touch.test.ts test/supers.test.ts test/actions.test.ts test/account.test.ts test/presence.test.ts test/save-file.test.ts test/replay-file.test.ts test/test-game.mjs test/determinism.mjs test/room.mjs",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
     "e2e:catalog": "node e2e/make-catalog.mjs",

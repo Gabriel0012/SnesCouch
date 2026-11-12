@@ -19,6 +19,8 @@ export interface PersonOptions {
   socketLag?: number;
   /** Navegador sem WebRTC: a partida só tem o servidor da sala. */
   noDirect?: boolean;
+  /** O seletor de pasta devolve uma pasta "replays" no armazenamento privado da página, sem dialog nativo. */
+  replayFolder?: boolean;
 }
 
 /** Uma pessoa com navegador próprio: localStorage, IndexedDB e cid separados. */
@@ -32,6 +34,12 @@ export async function person(browser: Browser, options: PersonOptions): Promise<
     if (opts.fps && localStorage.getItem("snes-couch-fps") === null) localStorage.setItem("snes-couch-fps", "1");
     if (opts.ping && localStorage.getItem("snes-couch-ping") === null) localStorage.setItem("snes-couch-ping", "1");
     if (opts.noDirect) Reflect.deleteProperty(window, "RTCPeerConnection");
+    if (opts.replayFolder) {
+      Object.defineProperty(window, "showDirectoryPicker", {
+        configurable: true,
+        value: async () => (await navigator.storage.getDirectory()).getDirectoryHandle("replays", { create: true }),
+      });
+    }
     if (opts.socketLag) {
       const send = WebSocket.prototype.send;
       WebSocket.prototype.send = function (this: WebSocket, data) {
@@ -130,13 +138,8 @@ export async function probe(page: Page): Promise<[number, number][]> {
   return page.evaluate(() => (window as unknown as { __snesTest: { probe(): Promise<[number, number][]> } }).__snesTest.probe());
 }
 
-async function runningFrames(page: Page): Promise<number> {
-  return (await probe(page)).length;
-}
-
-/** Frames em comum entre os dois emuladores e quantos deles têm hash diferente. */
-export async function sameFrames(a: Page, b: Page) {
-  const [left, right] = await Promise.all([probe(a), probe(b)]);
+/** Frames em comum entre duas leituras do probe e quantos deles têm hash diferente. */
+export function compareRings(left: [number, number][], right: [number, number][]) {
   const theirs = new Map(right);
   let common = 0;
   let mismatched = 0;
@@ -147,6 +150,16 @@ export async function sameFrames(a: Page, b: Page) {
     if (other !== hash) mismatched += 1;
   }
   return { common, mismatched };
+}
+
+async function runningFrames(page: Page): Promise<number> {
+  return (await probe(page)).length;
+}
+
+/** Frames em comum entre os dois emuladores e quantos deles têm hash diferente. */
+export async function sameFrames(a: Page, b: Page) {
+  const [left, right] = await Promise.all([probe(a), probe(b)]);
+  return compareRings(left, right);
 }
 
 export async function openSettings(page: Page) {

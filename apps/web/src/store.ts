@@ -43,12 +43,16 @@ function asBytes(value: unknown): Uint8Array | null {
 
 function idb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open("snes-couch", 1);
+    const request = indexedDB.open("snes-couch", 2);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains("sqlite")) request.result.createObjectStore("sqlite");
+      if (!request.result.objectStoreNames.contains("handles")) request.result.createObjectStore("handles");
     };
     request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      request.result.onversionchange = () => request.result.close();
+      resolve(request.result);
+    };
   });
 }
 
@@ -68,6 +72,25 @@ async function writeFile(bytes: Uint8Array) {
   const database = await idb();
   await new Promise<void>((resolve, reject) => {
     const request = database.transaction("sqlite", "readwrite").objectStore("sqlite").put(bytes, "db");
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve();
+  });
+}
+
+/** Handles de arquivo do navegador não cabem no sql.js; ficam numa store própria do IndexedDB. */
+export async function readHandle<T>(key: string): Promise<T | null> {
+  const database = await idb();
+  return new Promise((resolve, reject) => {
+    const request = database.transaction("handles", "readonly").objectStore("handles").get(key);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve((request.result as T | undefined) ?? null);
+  });
+}
+
+export async function writeHandle(key: string, value: unknown) {
+  const database = await idb();
+  await new Promise<void>((resolve, reject) => {
+    const request = database.transaction("handles", "readwrite").objectStore("handles").put(value, key);
     request.onerror = () => reject(request.error);
     request.onsuccess = () => resolve();
   });

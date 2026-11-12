@@ -42,6 +42,18 @@ import { startTouch } from "./touch.ts";
 import { controlGuide, keyboardScheme, padLabel } from "./pads.ts";
 import { games, isLibraryGame, localGame, localRomId, looksLikeSnesRom, matchRom, sha1Of, titleFromFile, type Game, type LibraryGame } from "./rom.ts";
 import { decodeSaveFile, encodeSaveFile } from "./save-file.ts";
+import { decodeReplay, encodeReplay, replayFileName } from "./replay-file.ts";
+import {
+  canPickFolder,
+  chooseFolder,
+  deleteReplay,
+  ensurePermission,
+  listReplays,
+  readReplay,
+  replayFolder,
+  writeReplay,
+  type ReplayFolder,
+} from "./replay-folder.ts";
 import { OnlineSession, SEAT_TAKEN, type Ban, type ChatLine, type Role, type Roster } from "./session.ts";
 import { FIGHTERS, LEFT, RIGHT, SELECT, X, fighterLabel, specialSteps, superSteps, type Fighter } from "./supers.ts";
 import { bindScreen, setCrt, whenCrtDrops } from "./crt.ts";
@@ -208,7 +220,7 @@ const localChecks = new Map<number, number>();
 const remoteChecks = new Map<number, number>();
 let checkpointWait: ((snapshot: { frame: number; state: Uint8Array; delay: number }) => void) | null = null;
 let saveWait: ((saved: { state: Uint8Array; shot: Uint8Array | null }) => void) | null = null;
-type AlertMode = "forget" | "reset-local" | "reset-ask" | "reset-wait" | "reset-in" | "drop-slot" | "kick";
+type AlertMode = "forget" | "reset-local" | "reset-ask" | "reset-wait" | "reset-in" | "drop-slot" | "drop-replay" | "kick";
 const E2E = import.meta.env.VITE_E2E === "1";
 const probeWaits: ((ring: [number, number][]) => void)[] = [];
 
@@ -578,6 +590,8 @@ function stopPlay(next: "drop" | "welcome" = "drop") {
   window.clearTimeout(resetTimer);
   relaunching = false;
   romBytes = null;
+  void stopRecording(false);
+  dropReplay();
   worker?.terminate();
   worker = null;
   sab = null;
@@ -766,6 +780,8 @@ function relaunch(net: ResetNet) {
   relaunching = true;
   const rom = romBytes;
   const game = loadedGame;
+  void stopRecording(false);
+  dropReplay();
   worker?.terminate();
   worker = null;
   if (transferred) replaceScreen();
@@ -790,6 +806,10 @@ function onWorker(message: {
 }) {
   if (message.t === "fps" && message.fps !== undefined) {
     if (fpsOn) fpsBadge.textContent = `${Math.round(message.fps)} FPS`;
+    return;
+  }
+  if (message.t.startsWith("rec-") || message.t.startsWith("replay-")) {
+    onReplayMessage(message as unknown as ReplayMessage);
     return;
   }
   if (message.t === "probe") {
@@ -841,7 +861,12 @@ function onWorker(message: {
     saveWait?.({ state: new Uint8Array(message.state), shot: message.shot ? new Uint8Array(message.shot) : null });
     saveWait = null;
   }
-  if (message.t === "restored") setBanner("Save carregado.", "success");
+  if (message.t === "restored") {
+    if (replayLeaving) {
+      replayLeaving = false;
+      setBanner("Replay fechado. O jogo voltou de onde parou.", "info");
+    } else setBanner("Save carregado.", "success");
+  }
   if (message.t === "error") {
     if (message.message === "O núcleo não aceitou essa ROM." && loadedGame && isLibraryGame(loadedGame)) {
       void dropRejectedLocal();
@@ -1749,6 +1774,419 @@ async function readSlot(game: Game, slot: number, savedAt: number) {
   showConfirm(`Carregar o save de ${when(savedAt)} nos dois?`, "both");
 }
 
+interface ReplayMessage {
+  t: string;
+  at?: number;
+  frame?: number;
+  fight?: boolean;
+  state?: ArrayBuffer;
+  pads?: number[];
+  hashes?: number[];
+  pos?: number;
+  total?: number;
+  indexed?: number;
+  playing?: boolean;
+  busy?: boolean;
+}
+
+interface Recording {
+  game: Game;
+  folder: ReplayFolder;
+  startedAt: number;
+  firstFrame: number;
+  fight: boolean;
+  pads: number[];
+  segments: { at: number; state: Uint8Array }[];
+  hashes: number[];
+  stopping: boolean;
+}
+
+const SNES_FPS = 60.0988;
+const recButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-rec]")];
+const replaysModal = document.querySelector<HTMLElement>("#replays-modal")!;
+const replaysList = document.querySelector<HTMLElement>("#replays-list")!;
+const replaysWhere = document.querySelector<HTMLElement>("#replays-where")!;
+const replaysFolderLabel = document.querySelector<HTMLElement>("#replays-folder")!;
+const replaysOpen = document.querySelector<HTMLButtonElement>("#replays-open")!;
+const replayBar = document.querySelector<HTMLElement>("#replay-bar")!;
+const replayToggle = document.querySelector<HTMLButtonElement>("#replay-toggle")!;
+const replaySeek = document.querySelector<HTMLInputElement>("#replay-seek")!;
+const replayClock = document.querySelector<HTMLElement>("#replay-clock")!;
+let rec: Recording | null = null;
+let recDone: (() => void) | null = null;
+let replayOn = false;
+let replayLeaving = false;
+let replayCheckpoint: Uint8Array | null = null;
+let replayPos = 0;
+let replayTotal = 0;
+let replayPlaying = false;
+let replayScrubbing = false;
+let replaySeekSent = 0;
+let replaySeekTimer = 0;
+let dropReplayName: string | null = null;
+
+function clock(frames: number): string {
+  const seconds = Math.max(0, Math.floor(frames / SNES_FPS));
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const ss = String(seconds % 60).padStart(2, "0");
+  if (hours) return `${hours}:${String(minutes % 60).padStart(2, "0")}:${ss}`;
+  return `${minutes}:${ss}`;
+}
+
+function recFrames(recording: Recording): number {
+  return recording.pads.length >> 1;
+}
+
+function paintRec() {
+  const can = canPickFolder();
+  const live = !!rec && !rec.stopping;
+  for (const button of recButtons) {
+    button.hidden = !can;
+    button.disabled = replayOn || !!rec?.stopping;
+    button.classList.toggle("on", live);
+    button.setAttribute("aria-pressed", live ? "true" : "false");
+    const label = button.querySelector("span");
+    if (label) label.textContent = live && rec ? `Parar · ${clock(recFrames(rec))}` : "Gravar";
+  }
+}
+
+async function paintReplayFolder() {
+  if (!canPickFolder()) {
+    replaysFolderLabel.textContent = "Este navegador não grava replays. Use o Chrome ou o Edge no computador.";
+    replaysOpen.textContent = "Replays";
+    replaysOpen.disabled = true;
+    return;
+  }
+  const folder = await replayFolder();
+  replaysFolderLabel.textContent = folder ? folder.name : "Nenhuma pasta escolhida";
+  replaysOpen.textContent = folder ? "Replays" : "Escolher pasta";
+  replaysOpen.disabled = false;
+}
+
+/** Runs inside the click, so the browser can ask for the folder. */
+async function readyFolder(): Promise<ReplayFolder | null> {
+  let folder = await replayFolder();
+  if (folder && !(await ensurePermission(folder))) folder = null;
+  if (!folder) folder = await chooseFolder();
+  if (folder && !(await ensurePermission(folder))) folder = null;
+  await paintReplayFolder();
+  return folder;
+}
+
+async function toggleRec() {
+  setPlayMenu(false);
+  if (rec) {
+    if (!rec.stopping) await stopRecording(true);
+    return;
+  }
+  const game = loadedGame;
+  if (!worker || !game) {
+    setBanner("Solte a ROM antes de gravar.", "warn");
+    return;
+  }
+  if (replayOn) return;
+  const folder = await readyFolder();
+  if (!folder) {
+    setBanner("Escolha uma pasta para guardar os replays.", "warn");
+    return;
+  }
+  if (!worker || loadedGame?.id !== game.id || rec) return;
+  rec = { game, folder, startedAt: Date.now(), firstFrame: 0, fight: false, pads: [], segments: [], hashes: [], stopping: false };
+  worker.postMessage({ t: "rec-start" });
+  paintRec();
+  setBanner(`Gravando o replay na pasta ${folder.name}.`, "info");
+}
+
+/** `flush` waits for the frames still inside the worker; without it, what arrived so far is saved. */
+async function stopRecording(flush: boolean) {
+  const recording = rec;
+  if (!recording || recording.stopping) return;
+  recording.stopping = true;
+  paintRec();
+  if (flush && worker) {
+    const target = worker;
+    await new Promise<void>((resolve) => {
+      const timer = window.setTimeout(resolve, 1500);
+      recDone = () => {
+        window.clearTimeout(timer);
+        resolve();
+      };
+      target.postMessage({ t: "rec-stop" });
+    });
+    recDone = null;
+  } else worker?.postMessage({ t: "rec-stop" });
+  if (rec === recording) rec = null;
+  paintRec();
+  await saveRecording(recording);
+}
+
+async function saveRecording(recording: Recording) {
+  const frames = recFrames(recording);
+  const segments = recording.segments.filter((segment) => segment.at < frames);
+  if (frames < 2 || segments.length === 0 || segments[0].at !== 0) {
+    setBanner("O replay ficou vazio e não foi gravado.", "warn");
+    return;
+  }
+  const { game, folder } = recording;
+  try {
+    const file = await encodeReplay({
+      header: {
+        v: 1,
+        gameId: game.id,
+        title: game.title,
+        sha1: game.sha1,
+        fight: recording.fight,
+        startedAt: recording.startedAt,
+        firstFrame: recording.firstFrame,
+        frames,
+      },
+      pads: Uint16Array.from(recording.pads),
+      segments,
+      hashes: Uint32Array.from(recording.hashes),
+    });
+    await writeReplay(folder, replayFileName(game.title, recording.startedAt), file);
+    setBanner(`Replay de ${clock(frames)} gravado na pasta ${folder.name}.`, "success");
+  } catch {
+    setBanner(`Não deu para gravar o replay na pasta ${folder.name}.`, "error");
+  }
+  if (!replaysModal.hidden) await paintReplays();
+}
+
+function onReplayMessage(message: ReplayMessage) {
+  if (message.t === "rec-state" && message.state && rec) {
+    const at = message.at ?? 0;
+    const state = new Uint8Array(message.state);
+    if (rec.segments.length === 0) {
+      rec.firstFrame = message.frame ?? 0;
+      rec.fight = message.fight === true;
+    }
+    const last = rec.segments[rec.segments.length - 1];
+    if (last && last.at === at) last.state = state;
+    else rec.segments.push({ at, state });
+    return;
+  }
+  if (message.t === "rec-frames" && rec) {
+    for (const value of message.pads ?? []) rec.pads.push(value & 0xffff);
+    for (const value of message.hashes ?? []) rec.hashes.push(value >>> 0);
+    if (!rec.stopping) paintRec();
+    return;
+  }
+  if (message.t === "rec-done") {
+    recDone?.();
+    return;
+  }
+  if (message.t === "replay-pos" && replayOn) {
+    replayPos = message.pos ?? 0;
+    replayTotal = message.total ?? replayTotal;
+    replayPlaying = message.playing === true;
+    paintReplayBar(message.indexed ?? 0, message.busy === true);
+    return;
+  }
+  if (message.t === "replay-desync" && replayOn) {
+    setBanner("Esse replay saiu do sincronismo. Ele pode ter sido gravado com outra versão do emulador.", "warn");
+  }
+}
+
+function paintReplayBar(indexed = 0, busy = false) {
+  replayBar.hidden = !replayOn;
+  paintRec();
+  if (!replayOn) return;
+  replayToggle.textContent = replayPlaying ? "Pausar" : "Tocar";
+  replaySeek.max = String(Math.max(1, replayTotal));
+  if (!replayScrubbing) replaySeek.value = String(Math.max(1, replayPos));
+  replaySeek.style.setProperty("--indexed", `${replayTotal ? Math.min(100, (indexed / replayTotal) * 100) : 0}%`);
+  replaySeek.classList.toggle("busy", busy);
+  const shown = replayScrubbing ? Number(replaySeek.value) : replayPos;
+  replayClock.textContent = `${clock(shown)} / ${clock(replayTotal)}`;
+}
+
+function closeReplays(immediate = false) {
+  if (immediate) replaysModal.hidden = true;
+  else conceal(replaysModal, "modal");
+}
+
+async function openReplays() {
+  closeSettings(true);
+  if (!canPickFolder()) return;
+  const folder = await readyFolder();
+  if (!folder) {
+    setBanner("Escolha uma pasta para guardar os replays.", "warn");
+    return;
+  }
+  reveal(replaysModal, "modal");
+  document.querySelector<HTMLButtonElement>("#replays-close")?.focus();
+  await paintReplays();
+}
+
+function replayRow(text: string): HTMLLIElement {
+  const row = document.createElement("li");
+  row.className = "replays-empty";
+  row.textContent = text;
+  return row;
+}
+
+async function paintReplays() {
+  const folder = await replayFolder();
+  replaysWhere.textContent = folder ? `Pasta: ${folder.name}` : "Nenhuma pasta escolhida";
+  if (!folder) {
+    replaysList.replaceChildren();
+    return;
+  }
+  const game = loadedGame;
+  if (!game) {
+    replaysList.replaceChildren(replayRow("Abra um jogo para ver os replays dele."));
+    return;
+  }
+  let entries: Awaited<ReturnType<typeof listReplays>>;
+  try {
+    entries = await listReplays(folder, game.sha1);
+  } catch {
+    replaysList.replaceChildren(replayRow("Não deu para ler a pasta."));
+    return;
+  }
+  if (entries.length === 0) {
+    replaysList.replaceChildren(replayRow(`Nenhum replay de ${game.title} nesta pasta.`));
+    return;
+  }
+  replaysList.replaceChildren(
+    ...entries.map((entry) => {
+      const row = document.createElement("li");
+      row.dataset.replay = entry.name;
+      const text = document.createElement("span");
+      const title = document.createElement("b");
+      title.textContent = entry.header.startedAt ? when(entry.header.startedAt) : entry.name;
+      const meta = document.createElement("small");
+      meta.textContent = `${clock(entry.header.frames)} · ${(entry.size / 1024).toFixed(0)} KB`;
+      text.append(title, meta);
+      const actions = document.createElement("div");
+      actions.className = "replay-actions";
+      const play = document.createElement("button");
+      play.type = "button";
+      play.className = "replay-play";
+      play.textContent = "Assistir";
+      play.addEventListener("click", () => void playReplay(entry.name));
+      const drop = document.createElement("button");
+      drop.type = "button";
+      drop.className = "replay-drop";
+      drop.textContent = "Apagar";
+      drop.addEventListener("click", () => askDropReplay(entry.name));
+      actions.append(play, drop);
+      row.append(text, actions);
+      return row;
+    }),
+  );
+}
+
+function askDropReplay(name: string) {
+  if (alertMode) return;
+  dropReplayName = name;
+  openAlert("drop-replay");
+}
+
+async function removeReplay(name: string) {
+  const folder = await replayFolder();
+  if (!folder) return;
+  try {
+    await deleteReplay(folder, name);
+    setBanner("Replay apagado da pasta.", "success");
+  } catch {
+    setBanner("Não deu para apagar o replay.", "error");
+  }
+  await paintReplays();
+}
+
+async function playReplay(name: string) {
+  const game = loadedGame;
+  if (!game || !worker) {
+    setBanner("Abra o jogo antes de assistir o replay.", "warn");
+    return;
+  }
+  if (session) {
+    setBanner("Saia da sala para assistir um replay.", "warn");
+    return;
+  }
+  if (rec) {
+    setBanner("Pare a gravação antes de assistir um replay.", "warn");
+    return;
+  }
+  const folder = await replayFolder();
+  if (!folder) return;
+  let replay: Awaited<ReturnType<typeof decodeReplay>> = null;
+  try {
+    replay = await decodeReplay(await readReplay(folder, name));
+  } catch {
+    replay = null;
+  }
+  if (!replay) {
+    setBanner("Esse arquivo não é um replay deste emulador.", "error");
+    return;
+  }
+  if (replay.header.sha1 !== game.sha1) {
+    setBanner(replay.header.title ? `Esse replay é de ${replay.header.title}.` : "Esse replay é de outra ROM.", "error");
+    return;
+  }
+  closeReplays(true);
+  if (!replayOn) {
+    const snapshot = await askCheckpoint();
+    if (loadedGame?.id !== game.id || !worker) return;
+    replayCheckpoint = snapshot.state.length ? snapshot.state : null;
+  }
+  replayOn = true;
+  replayPos = 0;
+  replayTotal = replay.header.frames;
+  replayPlaying = true;
+  replayScrubbing = false;
+  paintSpeed(1);
+  const segments = replay.segments.map((segment) => ({ at: segment.at, state: segment.state.buffer as ArrayBuffer }));
+  worker.postMessage(
+    {
+      t: "replay-load",
+      pads: replay.pads.buffer,
+      segments,
+      hashes: replay.hashes.buffer,
+      firstFrame: replay.header.firstFrame,
+      fight: replay.header.fight,
+    },
+    [replay.pads.buffer as ArrayBuffer, replay.hashes.buffer as ArrayBuffer, ...segments.map((segment) => segment.state)],
+  );
+  paintReplayBar();
+  setBanner(`Replay de ${when(replay.header.startedAt || Date.now())}.`, "info");
+}
+
+/** The worker is gone or about to go: just forget the replay. */
+function dropReplay() {
+  replayOn = false;
+  replayLeaving = false;
+  replayCheckpoint = null;
+  window.clearTimeout(replaySeekTimer);
+  paintReplayBar();
+}
+
+function exitReplay() {
+  if (!replayOn) return;
+  const checkpoint = replayCheckpoint;
+  dropReplay();
+  worker?.postMessage({ t: "replay-exit" });
+  if (checkpoint) {
+    replayLeaving = true;
+    const copy = checkpoint.slice();
+    worker?.postMessage({ t: "restore", state: copy.buffer }, [copy.buffer]);
+  } else worker?.postMessage({ t: "local" });
+}
+
+function paintSpeed(speed: number) {
+  for (const button of replayBar.querySelectorAll<HTMLButtonElement>("[data-replay-speed]")) {
+    button.classList.toggle("on", Number(button.dataset.replaySpeed) === speed);
+  }
+}
+
+function sendSeek() {
+  window.clearTimeout(replaySeekTimer);
+  replaySeekSent = performance.now();
+  worker?.postMessage({ t: "replay-seek", pos: Number(replaySeek.value) });
+}
+
 async function dropRejectedLocal() {
   const game = loadedGame;
   if (!game || !isLibraryGame(game)) return;
@@ -1767,6 +2205,7 @@ async function connect(role: Role, code: string) {
     setBanner("Este jogo só roda nesta máquina.", "warn");
     return;
   }
+  exitReplay();
   if (!account) {
     nick = nickInput.value.replace(/\s+/g, " ").trim().slice(0, 20);
     nickInput.value = nick;
@@ -3131,6 +3570,7 @@ window.addEventListener("keydown", (event) => {
   else if (event.code === "Escape" && !libraryEdit.hidden) closeLibraryEdit();
   else if (event.code === "Escape" && !savesModal.hidden) closeSaves();
   else if (event.code === "Escape" && !settings.hidden) closeSettings();
+  else if (event.code === "Escape" && !replaysModal.hidden) closeReplays();
   else if (event.code === "Escape" && !bansModal.hidden) closeBans();
   else if (event.code === "Escape" && !joinChoice.hidden) closeJoinChoice();
   else if (event.code === "Escape" && !manual.hidden) closeManual();
@@ -3200,7 +3640,7 @@ window.addEventListener("keydown", (event) => {
     const tag = target.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON" || tag === "A" || tag === "SUMMARY" || target.isContentEditable) return;
   }
-  if (!manual.hidden || !alertBox.hidden || !savesModal.hidden || !settings.hidden || !libraryEdit.hidden || !bansModal.hidden || !joinChoice.hidden) return;
+  if (!manual.hidden || !alertBox.hidden || !savesModal.hidden || !settings.hidden || !replaysModal.hidden || !libraryEdit.hidden || !bansModal.hidden || !joinChoice.hidden) return;
   const tour = document.querySelector("#tour");
   if (tour instanceof HTMLElement && !tour.hidden) return;
   if (event.code === "KeyC") {
@@ -3321,6 +3761,49 @@ settings.addEventListener("click", (event) => {
   if (event.target === settings) closeSettings();
 });
 
+for (const button of recButtons) button.addEventListener("click", () => void toggleRec());
+replaysOpen.addEventListener("click", () => void openReplays());
+document.querySelector("#replays-close")!.addEventListener("click", () => closeReplays());
+replaysModal.addEventListener("click", (event) => {
+  if (event.target === replaysModal) closeReplays();
+});
+document.querySelector("#replays-change")!.addEventListener("click", () => {
+  void (async () => {
+    if (!(await chooseFolder())) return;
+    await paintReplayFolder();
+    await paintReplays();
+  })();
+});
+replayToggle.addEventListener("click", () => {
+  worker?.postMessage({ t: replayPlaying ? "replay-pause" : "replay-play" });
+});
+document.querySelector("#replay-back")!.addEventListener("click", () => {
+  worker?.postMessage({ t: "replay-seek", pos: Math.max(1, replayPos - Math.round(5 * SNES_FPS)) });
+});
+document.querySelector("#replay-step")!.addEventListener("click", () => worker?.postMessage({ t: "replay-step" }));
+document.querySelector("#replay-exit")!.addEventListener("click", () => exitReplay());
+replaySeek.addEventListener("input", () => {
+  replayScrubbing = true;
+  replayClock.textContent = `${clock(Number(replaySeek.value))} / ${clock(replayTotal)}`;
+  const wait = 90 - (performance.now() - replaySeekSent);
+  window.clearTimeout(replaySeekTimer);
+  if (wait <= 0) sendSeek();
+  else replaySeekTimer = window.setTimeout(sendSeek, wait);
+});
+replaySeek.addEventListener("change", () => {
+  replayScrubbing = false;
+  sendSeek();
+});
+for (const button of replayBar.querySelectorAll<HTMLButtonElement>("[data-replay-speed]")) {
+  button.addEventListener("click", () => {
+    const speed = Number(button.dataset.replaySpeed);
+    paintSpeed(speed);
+    worker?.postMessage({ t: "replay-speed", speed });
+  });
+}
+paintRec();
+void paintReplayFolder();
+
 banner.addEventListener("click", () => clearBanner());
 
 const pageHeader = document.querySelector<HTMLElement>("body > header")!;
@@ -3405,7 +3888,7 @@ document.addEventListener("pointerdown", (event) => {
   setPlayMenu(false);
 });
 
-const stageModals = ["#banner", "#library-edit", "#alert", "#saves-modal", "#settings", "#join-choice", "#bans-modal", "#manual"].map((selector) => {
+const stageModals = ["#banner", "#library-edit", "#alert", "#saves-modal", "#settings", "#replays-modal", "#join-choice", "#bans-modal", "#manual"].map((selector) => {
   const node = document.querySelector<HTMLElement>(selector)!;
   return { node, parent: node.parentElement!, next: node.nextSibling };
 });
@@ -3463,6 +3946,9 @@ function openAlert(mode: AlertMode, name = "") {
   } else if (mode === "drop-slot") {
     alertText.textContent = `Apagar o save ${dropTarget?.slot ?? ""}? Ele sai deste navegador. Não tem como desfazer.`;
     alertYes.textContent = "Apagar";
+  } else if (mode === "drop-replay") {
+    alertText.textContent = "Apagar esse replay? O arquivo sai da pasta. Não tem como desfazer.";
+    alertYes.textContent = "Apagar";
   } else if (mode === "kick") {
     alertText.textContent = `Remover ${name} da sala? A pessoa fica bloqueada enquanto a sala existir. Dá para desbloquear em Bloqueados.`;
     alertYes.textContent = "Remover";
@@ -3477,6 +3963,7 @@ function openAlert(mode: AlertMode, name = "") {
 function closeAlert() {
   alertMode = null;
   dropTarget = null;
+  dropReplayName = null;
   kickTarget = null;
   alertYes.hidden = false;
   conceal(alertBox, "modal");
@@ -3616,6 +4103,12 @@ alertYes.addEventListener("click", () => {
     if (!target || session?.role !== "host") return;
     session.kick(target.id);
     setBanner(`${target.name} saiu da sala e ficou bloqueado.`, "success");
+    return;
+  }
+  if (mode === "drop-replay") {
+    const name = dropReplayName;
+    closeAlert();
+    if (name) void removeReplay(name);
     return;
   }
   if (mode === "drop-slot") {

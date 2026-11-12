@@ -14,6 +14,12 @@ O que é do jogo aberto fica na barra de ações embaixo da tela: Saves, Manual,
 
 Opção nova segue essa divisão. Se mexe só na partida atual, vai para a barra. Se é preferência do emulador, vai para a modal. A barra não ganha botão de configuração solto. No celular em tela cheia, o menu de três pontos espelha a barra e abre a mesma modal.
 
+## Replays
+
+O replay grava o state de cada trecho e os botões dos dois controles em cada frame (`apps/web/src/replay-file.ts`), e o emulador refaz a partida a partir disso. Não grava vídeo. Cada replay vira um arquivo `.snesreplay` numa pasta do computador escolhida pela pessoa (File System Access API, só Chrome e Edge no computador). Nada vai para a nuvem.
+
+Gravar fica na barra de ações, porque é da partida aberta. A pasta e a lista de replays ficam na modal de configurações. Enquanto um replay toca, a barra de ações dá lugar à barra do player. Os keyframes para a barra de tempo são montados no worker ao abrir o replay, e não entram no arquivo.
+
 ## Testes E2E
 
 Funcionalidade nova ou mudança de fluxo vem com cenário em `e2e/` (Playwright, só Chromium). Rodar `npm run e2e` antes de subir. O GitHub Actions roda `npm test` e `npm run e2e` em cada push e PR na `main`.

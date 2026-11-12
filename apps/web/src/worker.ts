@@ -42,18 +42,32 @@ interface NetRemote { t: "net-remote"; frames: { frame: number; buttons: number 
 interface NetResume { t: "net-resume"; slot: Slot; delay: number; frame: number; state: ArrayBuffer }
 interface RestoreMessage { t: "restore"; state: ArrayBuffer }
 interface ResetMessage { t: "reset"; slot?: Slot; delay?: number }
-interface Simple { t: "local" | "pause" | "checkpoint" | "stop" | "save" | "net-arm" | "watch-start" | "watch-stop" | "watch-snapshot" | "watch-mode" | "probe" }
+interface Simple {
+  t: "local" | "pause" | "checkpoint" | "stop" | "save" | "net-arm" | "watch-start" | "watch-stop" | "watch-snapshot" | "watch-mode" | "probe"
+    | "rec-start" | "rec-stop" | "replay-play" | "replay-pause" | "replay-step" | "replay-exit";
+}
+interface ReplayLoad {
+  t: "replay-load";
+  pads: ArrayBuffer;
+  segments: { at: number; state: ArrayBuffer }[];
+  hashes: ArrayBuffer;
+  firstFrame: number;
+  fight: boolean;
+}
+interface ReplaySeek { t: "replay-seek"; pos: number }
+interface ReplaySpeed { t: "replay-speed"; speed: number }
 interface SuperMessage { t: "super"; port: 0 | 1; steps: number[] }
 interface SpecialMessage { t: "special"; port: 0 | 1; held: number; steps: number[] }
 interface WatchLoad { t: "watch-load"; frame: number; state: ArrayBuffer }
 interface WatchFrames { t: "watch-frames"; frames: number[] }
 
-type Incoming = LoadMessage | NetStart | NetRemote | NetResume | RestoreMessage | ResetMessage | Simple | SuperMessage | SpecialMessage | WatchLoad | WatchFrames;
+type Incoming = LoadMessage | NetStart | NetRemote | NetResume | RestoreMessage | ResetMessage | Simple | SuperMessage | SpecialMessage | WatchLoad | WatchFrames
+  | ReplayLoad | ReplaySeek | ReplaySpeed;
 
 let canvas: OffscreenCanvas | null = null;
 let ctx: OffscreenCanvasRenderingContext2D | null = null;
 let pads: Uint16Array | null = null;
-let mode: "local" | "net" | "paused" | "watch" = "paused";
+let mode: "local" | "net" | "paused" | "watch" | "replay" = "paused";
 let lockstep: Lockstep | null = null;
 let checkpoint: Uint8Array | null = null;
 let checkpointFrame = 0;
@@ -82,6 +96,12 @@ const probeRing: [number, number][] = [];
 const WATCH_PRIME = 8;
 const WATCH_BEHIND = 30;
 const pendingRemote: { frame: number; buttons: number }[] = [];
+let recording = false;
+let recPads: number[] = [];
+let recHashes: number[] = [];
+let recAt = 0;
+let recSentAt = 0;
+const REC_HASH_EVERY = 60;
 const macro: [number[] | null, number[] | null] = [null, null];
 const macroAt = [0, 0];
 
@@ -150,16 +170,27 @@ function emitAudio() {
   post({ t: "audio", rate: core._snes_sample_rate(), samples }, [samples.buffer]);
 }
 
-function run(p0: number, p1: number) {
+/** One emulated frame with nothing shown: seeking and indexing a replay. */
+function quiet(p0: number, p1: number) {
   if (!core) return;
   if (fight) applyMoves(p0, p1);
   core._snes_set_input(0, p0 & ~MOVE_BITS);
   core._snes_set_input(1, p1 & ~MOVE_BITS);
   core._snes_run_frame();
+}
+
+function run(p0: number, p1: number, sound = true) {
+  if (!core) return;
+  quiet(p0, p1);
   paint();
-  emitAudio();
+  if (sound) emitAudio();
   fpsFrames += 1;
   if (watching) watchOut.push(frameNo, p0 & 0xffff, p1 & 0xffff);
+  if (recording) {
+    recPads.push(p0 & 0xffff, p1 & 0xffff);
+    if (recAt % REC_HASH_EVERY === REC_HASH_EVERY - 1) recHashes.push(recAt, core._snes_state_hash() >>> 0);
+    recAt += 1;
+  }
   if (probing) {
     probeRing.push([frameNo, core._snes_state_hash() >>> 0]);
     if (probeRing.length > 600) probeRing.shift();
@@ -187,6 +218,24 @@ function flushWatch(now: number) {
   watchSentAt = now;
 }
 
+function flushRec(now: number, force = false) {
+  if (!recording || recPads.length === 0) return;
+  if (!force && recPads.length < 120 && now - recSentAt < 250) return;
+  post({ t: "rec-frames", pads: recPads, hashes: recHashes });
+  recPads = [];
+  recHashes = [];
+  recSentAt = now;
+}
+
+/** The state changed outside the button stream: the frames so far close the old segment and a new one starts here. */
+function recBoundary() {
+  if (!recording) return;
+  flushRec(performance.now(), true);
+  const state = saveState();
+  if (!state) return;
+  post({ t: "rec-state", at: recAt, frame: frameNo, fight, state: state.buffer }, [state.buffer]);
+}
+
 function watchTick() {
   if (watchFrame < 0) return;
   let ahead = 0;
@@ -207,6 +256,221 @@ function watchTick() {
     run(pads[0], pads[1]);
     watchFrame += 1;
   }
+}
+
+interface ReplayData {
+  pads: Uint16Array;
+  segments: Map<number, Uint8Array>;
+  segmentAts: number[];
+  hashes: Map<number, number>;
+  total: number;
+  firstFrame: number;
+}
+
+let replay: ReplayData | null = null;
+/** Frames already shown: the picture is frame `replayPos - 1`. */
+let replayPos = 0;
+let replayPlaying = false;
+let replaySpeed = 1;
+let replayCredit = 0;
+let replayBusy = false;
+let replaySeekToken = 0;
+let replayPendingSeek = -1;
+let replayPostAt = 0;
+let replayPosted = "";
+let replayDesync = false;
+let replayFightBefore = false;
+let replayFrameBefore = 0;
+let keyStep = 180;
+/** Compressed states, each taken before the frame of its key runs. */
+const keyframes = new Map<number, Promise<Blob>>();
+let keyAts: number[] = [];
+let indexAt = 0;
+let indexState: Uint8Array | null = null;
+const REPLAY_SPEEDS = new Set([0.25, 0.5, 1, 2, 4, 8]);
+
+function pack(bytes: Uint8Array): Promise<Blob> {
+  return new Response(new Blob([bytes as Uint8Array<ArrayBuffer>]).stream().pipeThrough(new CompressionStream("gzip"))).blob();
+}
+
+async function unpack(blob: Blob): Promise<Uint8Array> {
+  return new Uint8Array(await new Response(blob.stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
+}
+
+function checkReplayHash(at: number) {
+  if (!replay || replayDesync || !core) return;
+  const want = replay.hashes.get(at);
+  if (want === undefined || want === core._snes_state_hash() >>> 0) return;
+  replayDesync = true;
+  post({ t: "replay-desync", at });
+}
+
+/** `fresh` means the state for `at` was just loaded, so its segment is already in place. */
+function replayFrame(at: number, show: boolean, fresh: boolean, sound = false) {
+  if (!replay) return;
+  const segment = fresh ? undefined : replay.segments.get(at);
+  if (segment) loadState(segment, true);
+  const p0 = replay.pads[at * 2];
+  const p1 = replay.pads[at * 2 + 1];
+  if (show) {
+    frameNo = replay.firstFrame + at;
+    run(p0, p1, sound);
+  } else quiet(p0, p1);
+  checkReplayHash(at);
+}
+
+function nearestKey(at: number): number {
+  if (!replay) return 0;
+  let best = 0;
+  for (const key of replay.segmentAts) if (key <= at && key > best) best = key;
+  for (const key of keyAts) if (key <= at && key > best) best = key;
+  return best;
+}
+
+async function keyState(at: number): Promise<Uint8Array | null> {
+  if (!replay) return null;
+  const segment = replay.segments.get(at);
+  if (segment) return segment;
+  const packed = keyframes.get(at);
+  return packed ? unpack(await packed) : null;
+}
+
+function postReplay(force = false) {
+  if (!replay) return;
+  const now = performance.now();
+  if (!force && now - replayPostAt < 100) return;
+  const busy = replayBusy || replayPendingSeek >= 0;
+  const key = `${replayPos}|${indexAt}|${replayPlaying}|${busy}`;
+  if (!force && key === replayPosted) return;
+  replayPostAt = now;
+  replayPosted = key;
+  post({ t: "replay-pos", pos: replayPos, total: replay.total, indexed: indexAt, playing: replayPlaying, busy });
+}
+
+async function seekReplay(target: number) {
+  if (!replay) return;
+  const goal = Math.max(1, Math.min(replay.total, Math.round(target)));
+  const last = goal - 1;
+  const token = ++replaySeekToken;
+  const key = nearestKey(last);
+  if (last - key > keyStep && indexAt < last) {
+    replayPendingSeek = goal;
+    postReplay(true);
+    return;
+  }
+  replayPendingSeek = -1;
+  replayBusy = true;
+  const state = await keyState(key);
+  if (token !== replaySeekToken || !replay) return;
+  if (!state || !loadState(state, true)) {
+    replayBusy = false;
+    post({ t: "error", message: "Não deu para voltar a esse ponto do replay." });
+    return;
+  }
+  for (let at = key; at < last; at++) replayFrame(at, false, at === key);
+  replayFrame(last, true, last === key);
+  replayPos = goal;
+  replayCredit = 0;
+  replayBusy = false;
+  postReplay(true);
+}
+
+/** Runs ahead on its own copy of the state and leaves a keyframe every `keyStep` frames. */
+function indexReplay(budgetMs: number) {
+  if (!replay || !indexState || indexAt >= replay.total || replayBusy) return;
+  const current = saveState();
+  if (!loadState(indexState, true)) return;
+  const until = performance.now() + budgetMs;
+  while (indexAt < replay.total && performance.now() < until) {
+    if (indexAt > 0 && indexAt % keyStep === 0 && !replay.segments.has(indexAt) && !keyframes.has(indexAt)) {
+      const state = saveState();
+      if (state) {
+        keyframes.set(indexAt, pack(state));
+        keyAts.push(indexAt);
+      }
+    }
+    replayFrame(indexAt, false, false);
+    indexAt += 1;
+  }
+  indexState = saveState();
+  if (current) loadState(current, true);
+  if (replayPendingSeek >= 0 && (indexAt >= replayPendingSeek - 1 || indexAt >= replay.total)) {
+    const goal = replayPendingSeek;
+    replayPendingSeek = -1;
+    void seekReplay(goal);
+  }
+}
+
+function replayTick() {
+  if (!replay || !replayPlaying || replayBusy || replayPendingSeek >= 0) return;
+  replayCredit += replaySpeed;
+  let steps = Math.floor(replayCredit);
+  replayCredit -= steps;
+  while (steps > 0 && replayPos < replay.total) {
+    replayFrame(replayPos, steps === 1, false, replaySpeed === 1);
+    replayPos += 1;
+    steps -= 1;
+  }
+  if (replayPos >= replay.total) {
+    replayPlaying = false;
+    replayCredit = 0;
+    postReplay(true);
+  }
+}
+
+function startReplay(message: ReplayLoad) {
+  recording = false;
+  clearMacros();
+  lockstep = null;
+  pendingRemote.length = 0;
+  watchQueue.clear();
+  const pads = new Uint16Array(message.pads);
+  const total = pads.length >> 1;
+  const segments = new Map<number, Uint8Array>();
+  for (const segment of message.segments) segments.set(segment.at, new Uint8Array(segment.state));
+  const flat = new Uint32Array(message.hashes);
+  const hashes = new Map<number, number>();
+  for (let i = 0; i + 1 < flat.length; i += 2) hashes.set(flat[i], flat[i + 1]);
+  if (total < 1 || !segments.has(0)) {
+    post({ t: "error", message: "Esse replay está vazio." });
+    return;
+  }
+  if (mode !== "replay") {
+    replayFightBefore = fight;
+    replayFrameBefore = frameNo;
+  }
+  fight = message.fight;
+  replay = { pads, segments, segmentAts: [...segments.keys()].sort((a, b) => a - b), hashes, total, firstFrame: message.firstFrame };
+  keyStep = Math.max(180, Math.ceil(total / 600));
+  keyframes.clear();
+  keyAts = [];
+  indexAt = 0;
+  indexState = segments.get(0)!;
+  replayPos = 0;
+  replaySpeed = 1;
+  replayCredit = 0;
+  replayBusy = false;
+  replayPendingSeek = -1;
+  replayDesync = false;
+  probeRing.length = 0;
+  mode = "replay";
+  replayPlaying = true;
+  void seekReplay(1);
+}
+
+function endReplay() {
+  replaySeekToken += 1;
+  replay = null;
+  replayPlaying = false;
+  replayBusy = false;
+  replayPendingSeek = -1;
+  keyframes.clear();
+  keyAts = [];
+  indexState = null;
+  fight = replayFightBefore;
+  frameNo = replayFrameBefore;
+  clearMacros();
+  mode = "paused";
 }
 
 async function frameShot(): Promise<Uint8Array | null> {
@@ -296,6 +560,7 @@ function loadRom(bytes: Uint8Array) {
   const ok = core._snes_load(ptr, bytes.length);
   core._free(ptr);
   if (ok === 1 && watching) watchDirty = true;
+  if (ok === 1) recBoundary();
   return ok === 1;
 }
 
@@ -307,6 +572,7 @@ function loadState(bytes: Uint8Array, inPlace = false) {
   const ok = core._snes_load_state(ptr, bytes.length);
   core._free(ptr);
   if (ok === 1 && watching && !inPlace) watchDirty = true;
+  if (ok === 1 && !inPlace) recBoundary();
   return ok === 1;
 }
 
@@ -359,6 +625,10 @@ function tick() {
     watchTick();
     return;
   }
+  if (mode === "replay") {
+    replayTick();
+    return;
+  }
   if (mode === "local" && pads) {
     const p0 = peekMacro(0, pads[0]);
     const p1 = peekMacro(1, pads[1]);
@@ -389,7 +659,12 @@ function pump(now: number) {
     due += FRAME_MS;
     ran += 1;
   }
+  if (mode === "replay") {
+    indexReplay(replayPendingSeek >= 0 ? 14 : replayPlaying ? 4 : 10);
+    postReplay();
+  }
   flushWatch(now);
+  flushRec(now);
   if (now - fpsSince >= 500) {
     const sample = fpsSince ? (fpsFrames * 1000) / (now - fpsSince) : 0;
     fpsShown = fpsShown ? fpsShown * 0.6 + sample * 0.4 : sample;
@@ -514,6 +789,61 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
     const quick = fight ? quickMove(message.t, fighter, forward, held) : null;
     playMacro(port, quick ?? (message.t === "super" ? superSteps(fighter, forward) : specialSteps(fighter, forward, held)));
     return;
+  }
+  if (message.t === "rec-start") {
+    recording = true;
+    recPads = [];
+    recHashes = [];
+    recAt = 0;
+    recSentAt = performance.now();
+    recBoundary();
+    return;
+  }
+  if (message.t === "rec-stop") {
+    flushRec(performance.now(), true);
+    recording = false;
+    post({ t: "rec-done", frames: recAt });
+    return;
+  }
+  if (message.t === "replay-load") {
+    startReplay(message);
+    return;
+  }
+  if (message.t === "replay-exit") {
+    endReplay();
+    return;
+  }
+  if (mode === "replay" && replay) {
+    if (message.t === "replay-play") {
+      if (replayPos >= replay.total) void seekReplay(1);
+      replayPlaying = true;
+      replayCredit = 0;
+      postReplay(true);
+      return;
+    }
+    if (message.t === "replay-pause") {
+      replayPlaying = false;
+      postReplay(true);
+      return;
+    }
+    if (message.t === "replay-step") {
+      replayPlaying = false;
+      if (!replayBusy && replayPendingSeek < 0 && replayPos < replay.total) {
+        replayFrame(replayPos, true, false);
+        replayPos += 1;
+      }
+      postReplay(true);
+      return;
+    }
+    if (message.t === "replay-seek") {
+      void seekReplay(Number(message.pos));
+      return;
+    }
+    if (message.t === "replay-speed") {
+      if (REPLAY_SPEEDS.has(message.speed)) replaySpeed = message.speed;
+      replayCredit = 0;
+      return;
+    }
   }
   if (message.t === "net-arm") {
     pendingRemote.length = 0;

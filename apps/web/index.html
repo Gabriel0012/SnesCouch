@@ -73,6 +73,7 @@
         <div class="toolbar arrive">
           <div class="dock-group" role="group" aria-label="Partida">
             <button id="saves-open" type="button">Saves</button>
+            <button id="rec" class="rec-btn" type="button" data-rec aria-pressed="false"><i aria-hidden="true"></i><span>Gravar</span></button>
             <button id="manual-open" type="button">Manual</button>
             <button id="reset" type="button"><i aria-hidden="true"></i>Reiniciar</button>
             <button id="close-play" class="close-play" type="button" data-close-play><b aria-hidden="true">×</b>Fechar jogo</button>
@@ -102,6 +103,25 @@
             <button id="settings-open" class="settings-btn" type="button" data-settings-open aria-label="Configurações"></button>
           </div>
         </div>
+        <div id="replay-bar" class="replay-bar" hidden>
+          <div class="dock-group" role="group" aria-label="Replay">
+            <button id="replay-toggle" type="button">Pausar</button>
+            <button id="replay-back" type="button" aria-label="Voltar 5 segundos">−5s</button>
+            <button id="replay-step" type="button" aria-label="Avançar um quadro">+1 quadro</button>
+          </div>
+          <div class="replay-time">
+            <input id="replay-seek" type="range" min="1" max="1" value="1" step="1" aria-label="Tempo do replay" />
+            <span id="replay-clock">0:00 / 0:00</span>
+          </div>
+          <div class="cluster replay-speeds" role="group" aria-label="Velocidade do replay">
+            <button type="button" data-replay-speed="0.5">0.5×</button>
+            <button type="button" data-replay-speed="1" class="on">1×</button>
+            <button type="button" data-replay-speed="2">2×</button>
+            <button type="button" data-replay-speed="4">4×</button>
+            <button type="button" data-replay-speed="8">8×</button>
+          </div>
+          <button id="replay-exit" class="close-replay" type="button"><b aria-hidden="true">×</b>Sair do replay</button>
+        </div>
           </div>
         </div>
         <div id="touch" hidden>
@@ -124,6 +144,7 @@
               <span data-vol-readout>100%</span>
             </div>
             <div class="play-menu-row">
+              <button class="rec-btn" type="button" data-rec aria-pressed="false"><i aria-hidden="true"></i><span>Gravar</span></button>
               <button type="button" data-crt aria-pressed="false">
                 <img src="/crt.png" alt="" width="28" height="28">Filtro CRT
               </button>
@@ -345,11 +366,33 @@
           <span>Mostrar ping da sala<small>Indicativo da qualidade de conexão entre os jogadores.</small></span>
           <button class="switch" type="button" data-ping aria-pressed="false" aria-label="Mostrar ping da sala"><i></i></button>
         </div>
+        <h3>Replays</h3>
+        <div class="setting-row" id="replays-row">
+          <span>Pasta dos replays<small id="replays-folder">Nenhuma pasta escolhida</small></span>
+          <button id="replays-open" type="button">Escolher pasta</button>
+        </div>
         <h3>ROM</h3>
         <div class="setting-row">
           <span>Tirar a ROM deste navegador<small>Os saves do jogo saem junto.</small></span>
           <button id="forget" type="button"><i aria-hidden="true"></i>Esquecer ROM</button>
         </div>
+      </div>
+    </div>
+    <div id="replays-modal" hidden>
+      <div class="choice-card replays-card" role="dialog" aria-modal="true" aria-labelledby="replays-title">
+        <div class="saves-bar">
+          <h2 id="replays-title">Replays</h2>
+          <button id="replays-close" type="button" aria-label="Fechar">×</button>
+        </div>
+        <div class="replays-where">
+          <span id="replays-where"></span>
+          <div class="replays-tools">
+            <button id="replays-import" type="button">Importar</button>
+            <button id="replays-change" type="button">Trocar pasta</button>
+          </div>
+        </div>
+        <ul id="replays-list"></ul>
+        <input id="replay-import" type="file" accept=".snesreplay" hidden />
       </div>
     </div>
     <div id="manual" hidden>
