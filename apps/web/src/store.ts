@@ -271,6 +271,14 @@ export function lastGame(): Promise<string | null> {
   });
 }
 
+export function setLastGame(gameId: string) {
+  return enqueue(async () => {
+    const database = await db();
+    database.run(`INSERT INTO meta (key, value) VALUES ('last-game', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [gameId]);
+    await persist(database);
+  });
+}
+
 export function playerName(): Promise<string> {
   return enqueue(async () => {
     const row = one(await db(), "SELECT value FROM meta WHERE key = 'player-name'", []);

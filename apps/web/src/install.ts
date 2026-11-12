@@ -7,22 +7,18 @@ function installed(): boolean {
   return window.matchMedia("(display-mode: standalone)").matches || window.matchMedia("(display-mode: fullscreen)").matches;
 }
 
-function phone(): boolean {
-  return window.matchMedia("(pointer: coarse)").matches || window.matchMedia("(max-width: 1080px)").matches;
-}
-
 function isInstallPrompt(event: Event): event is InstallPrompt {
   return "prompt" in event && typeof (event as InstallPrompt).prompt === "function";
 }
 
-/** Chrome install shortcut. The button stays hidden on desktop and after the app is installed. */
+/** Show the install button when the browser offers its native install prompt. */
 export function startInstall(button: HTMLButtonElement) {
   if (installed()) return;
 
   let promptEvent: InstallPrompt | null = null;
 
   window.addEventListener("beforeinstallprompt", (event) => {
-    if (!phone() || !isInstallPrompt(event)) return;
+    if (!isInstallPrompt(event)) return;
     event.preventDefault();
     promptEvent = event;
     button.hidden = false;
@@ -33,7 +29,15 @@ export function startInstall(button: HTMLButtonElement) {
     if (!pending) return;
     promptEvent = null;
     button.hidden = true;
-    void pending.prompt();
+    void (async () => {
+      try {
+        await pending.prompt();
+        const choice = await pending.userChoice;
+        if (choice.outcome === "dismissed") button.hidden = false;
+      } catch {
+        button.hidden = false;
+      }
+    })();
   });
 
   window.addEventListener("appinstalled", () => {

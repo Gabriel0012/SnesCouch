@@ -21,6 +21,7 @@ export interface PersonOptions {
   noDirect?: boolean;
   /** O seletor de pasta devolve uma pasta "replays" no armazenamento privado da página, sem dialog nativo. */
   replayFolder?: boolean;
+  romFolder?: boolean;
 }
 
 /** Uma pessoa com navegador próprio: localStorage, IndexedDB e cid separados. */
@@ -38,6 +39,12 @@ export async function person(browser: Browser, options: PersonOptions): Promise<
       Object.defineProperty(window, "showDirectoryPicker", {
         configurable: true,
         value: async () => (await navigator.storage.getDirectory()).getDirectoryHandle("replays", { create: true }),
+      });
+    }
+    if (opts.romFolder) {
+      Object.defineProperty(window, "showDirectoryPicker", {
+        configurable: true,
+        value: async () => (await navigator.storage.getDirectory()).getDirectoryHandle("roms", { create: true }),
       });
     }
     if (opts.socketLag) {

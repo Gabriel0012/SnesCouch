@@ -209,6 +209,8 @@ let hostWatching = false;
 let bans: Ban[] = [];
 let kickTarget: { id: string; name: string } | null = null;
 let worker: Worker | null = null;
+let workerReady = false;
+let workerStartTimer = 0;
 const speaker = new Speaker();
 let sab: SharedArrayBuffer | null = null;
 let pads: Uint16Array | null = null;
@@ -596,7 +598,9 @@ function replaceScreen() {
 
 function stopPlay(next: "drop" | "welcome" = "drop") {
   window.clearTimeout(resetTimer);
+  window.clearTimeout(workerStartTimer);
   relaunching = false;
+  workerReady = false;
   romBytes = null;
   void stopRecording(false);
   dropReplay();
@@ -634,7 +638,7 @@ async function openStored(game: Game) {
       ready.delete(game.id);
       if (selected.id === game.id) selected = localGame;
       await refreshLibrary();
-      setBanner("A ROM gravada n?o parece de Super Nintendo. Solta o arquivo de novo.", "error");
+      setBanner("A ROM gravada n\u00e3o parece de Super Nintendo. Solta o arquivo de novo.", "error");
       return;
     }
     await boot(game, record.bytes);
@@ -650,17 +654,23 @@ async function openStored(game: Game) {
     ready.delete(game.id);
     renderGames();
   }
-  roomState.textContent = game.title + ". Procurando a ROM na pasta escolhida?";
+  roomState.textContent = game.title + ". Procurando a ROM na pasta escolhida\u2026";
   const fromFolder = await findRomInFolder(game);
   if (fromFolder) {
+    try {
+      await saveRom(game.id, game.sha1, fromFolder);
+      ready.add(game.id);
+    } catch {
+      setBanner("A ROM abriu, mas não ficou gravada neste navegador.", "warn");
+    }
     await boot(game, fromFolder);
     return;
   }
   stopPlay();
   const folder = await romFolder();
   roomState.textContent = folder
-    ? game.title + ". N?o encontrei uma ROM com o SHA-1 correto na pasta escolhida. Solte o arquivo para abrir."
-    : game.title + ". Solte a ROM uma vez, ou escolha uma pasta nas configura??es.";
+    ? game.title + ". N\u00e3o encontrei uma ROM com o SHA-1 correto na pasta escolhida. Solte o arquivo para abrir."
+    : game.title + ". Solte a ROM uma vez, ou escolha uma pasta nas configura\u00e7\u00f5es.";
 }
 
 async function keepCatalog(game: Game, rom: Uint8Array) {
@@ -764,12 +774,34 @@ function startWorker(rom: Uint8Array, game: Game, net: ResetNet = null) {
   transferred = true;
   worker?.terminate();
   worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+  const runningWorker = worker;
+  workerReady = false;
   worker.onmessage = (event) => onWorker(event.data);
+  worker.onerror = (event) => {
+    if (worker !== runningWorker) return;
+    const detail = event.message?.trim();
+    failWorkerStart(detail ? `O emulador falhou ao iniciar: ${detail}` : "O emulador falhou ao iniciar o jogo. Consulte o console para ver o erro técnico.");
+  };
+  window.clearTimeout(workerStartTimer);
+  workerStartTimer = window.setTimeout(() => {
+    if (worker === runningWorker && !workerReady) {
+      failWorkerStart("O emulador não confirmou a abertura do jogo em 20 segundos. A ROM pode ser incompatível.");
+    }
+  }, 20_000);
   const copy = rom.slice();
   worker.postMessage(
     { t: "load", rom: copy.buffer, canvas, sab, plain, fight, probe: E2E, ...(net && !plain ? { net } : {}) },
     [copy.buffer, canvas],
   );
+}
+
+function failWorkerStart(message: string) {
+  window.clearTimeout(workerStartTimer);
+  if (worker && !workerReady) {
+    stopPlay();
+    updateDrop();
+  }
+  setBanner(message, "error");
 }
 
 function kickReset(net: ResetNet) {
@@ -841,6 +873,8 @@ function onWorker(message: {
     return;
   }
   if (message.t === "loaded" && message.rate) {
+    workerReady = true;
+    window.clearTimeout(workerStartTimer);
     if (session?.role === "spectator") worker?.postMessage({ t: "watch-mode" });
     hostWatching = false;
     syncHostWatch();
@@ -883,12 +917,16 @@ function onWorker(message: {
     } else setBanner("Save carregado.", "success");
   }
   if (message.t === "error") {
-    if (message.message === "O núcleo não aceitou essa ROM." && loadedGame && isLibraryGame(loadedGame)) {
+    if (message.message?.includes("recusou a ROM") && loadedGame && isLibraryGame(loadedGame)) {
       void dropRejectedLocal();
       return;
     }
-    if (message.message === "Não deu para reiniciar o jogo." && !relaunching) relaunch(resetNet);
-    else setBanner(message.message ?? "Falha no núcleo.", "error");
+    if (!workerReady) {
+      failWorkerStart(message.message ?? "O nucleo falhou ao abrir a ROM sem informar o motivo.");
+      return;
+    }
+    if (message.message?.includes("reiniciar o jogo") && !relaunching) relaunch(resetNet);
+    else setBanner(message.message ?? "Falha no nucleo.", "error");
   }
 }
 
@@ -3417,6 +3455,8 @@ fileInput.addEventListener("change", () => {
   if (file) void openFile(file);
 });
 
+document.querySelector<HTMLButtonElement>("#welcome-rom-upload")!.addEventListener("click", () => fileInput.click());
+
 nickInput.addEventListener("input", () => {
   publishProfile();
   renderPeople();
@@ -3762,8 +3802,9 @@ async function paintRomFolder() {
   }
   const folder = await romFolder();
   romFolderLabel.textContent = folder
-    ? `${folder.name}. A busca inclui subpastas.`
+    ? `Pasta selecionada: ${folder.name}`
     : "Nenhuma pasta escolhida. A busca inclui subpastas.";
+  romFolderLabel.title = folder ? `Pasta selecionada: ${folder.name}` : "";
 }
 
 romFolderOpen.addEventListener("click", () => {
@@ -4354,7 +4395,7 @@ booting = (async () => {
     }
     paintTabs();
     renderGames();
-    if (game && game.id !== localGame.id && ready.has(game.id)) await openStored(game);
+    if (game && game.id !== localGame.id) await openStored(game);
   } catch {
     setBanner("Não deu para abrir o banco deste navegador. A ROM vale só nesta visita.", "error");
   }

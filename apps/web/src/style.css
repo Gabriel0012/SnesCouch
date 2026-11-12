@@ -764,6 +764,7 @@ header .lede { color: var(--header-dim); margin: 0; }
   box-shadow: inset 0 0 0 3px var(--b), 4px 4px 0 #000;
 }
 .welcome p { margin: 0; }
+.welcome button { margin-top: 0.85rem; }
 .welcome[hidden] { display: none; }
 
 #picture {

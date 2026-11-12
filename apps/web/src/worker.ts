@@ -704,11 +704,30 @@ self.onmessage = async (event: MessageEvent<Incoming>) => {
     fight = message.fight === true;
     ctx = canvas.getContext("2d", { alpha: false });
     pads = new Uint16Array(message.sab);
-    core = await createSnes({ locateFile: (file: string) => (file.endsWith(".wasm") ? wasmUrl : file) }) as Core;
+    const diagnostics: string[] = [];
+    try {
+      core = await createSnes({
+        locateFile: (file: string) => (file.endsWith(".wasm") ? wasmUrl : file),
+        printErr: (...parts: unknown[]) => {
+          const line = parts.map(String).join(" ").trim();
+          if (line) diagnostics.push(line);
+        },
+      }) as Core;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      post({ t: "error", message: `Falha ao iniciar o núcleo do emulador: ${detail}` });
+      return;
+    }
     rom = new Uint8Array(message.rom);
     const ok = loadRom(rom);
     if (!ok) {
-      post({ t: "error", message: "O núcleo não aceitou essa ROM." });
+      const detail = diagnostics.slice(-4).join(" ").slice(0, 400);
+      post({
+        t: "error",
+        message: detail
+          ? "O n\u00facleo recusou a ROM: " + detail
+          : "O n\u00facleo recusou a ROM (snes_load=" + ok + "). Verifique se o arquivo \u00e9 compat\u00edvel com o emulador.",
+      });
       return;
     }
     clearMacros();
