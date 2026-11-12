@@ -30,6 +30,7 @@
   --muted: #b7bcc8;
   --page: var(--ink);
   --paper: #f6f3ea;
+  --high-contrast-text: #12141a;
   --header: #030406;
   --header-ink: #8b93a3;
   --header-dim: #6e7585;
@@ -75,6 +76,7 @@
     --muted: #5c564c;
     --page: #f3eee3;
     --paper: #1c1a16;
+    --high-contrast-text: #fffdf8;
     --header: #fffdf8;
     --header-ink: #5c564c;
     --header-dim: #6e675c;
@@ -161,6 +163,30 @@ footer a.coffee[hidden] { display: none; }
 footer a.coffee img {
   width: 22px;
   height: 24px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+footer a.github-repo {
+  display: inline-flex;
+  cursor: pointer;
+  flex: none;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.55rem;
+  background: #1c1a16;
+  color: #fffdf8;
+  text-decoration: none;
+  box-shadow: inset -3px -3px 0 var(--sink), inset 3px 3px 0 var(--lift), 3px 3px 0 #000;
+}
+footer a.github-repo:active {
+  transform: translate(2px, 2px);
+  box-shadow: inset -2px -2px 0 var(--sink), inset 2px 2px 0 var(--lift), 2px 2px 0 #000;
+}
+footer a.github-repo:focus-visible { outline: 2px solid var(--b); outline-offset: 2px; }
+footer a.github-repo[hidden] { display: none; }
+footer a.github-repo img {
+  width: 24px;
+  height: 23px;
   object-fit: contain;
   image-rendering: pixelated;
 }
