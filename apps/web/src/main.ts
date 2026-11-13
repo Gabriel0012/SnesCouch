@@ -9,6 +9,7 @@ import {
   downloadSave,
   downloadShot,
   fetchAccount,
+  loadFavorites,
   inviteFriend,
   listCloud,
   loadFriends,
@@ -17,6 +18,7 @@ import {
   postPresence,
   publishOpenRoom,
   removeFriend,
+  setFavorite,
   uploadSave,
   type AccountUser,
   type DeviceKind,
@@ -33,6 +35,8 @@ import inviteNoUrl from "./assets/invite-no.png";
 import phoneUrl from "./assets/device-phone.png";
 import desktopUrl from "./assets/device-desktop.png";
 import saveIconUrl from "./assets/save-floppy.png";
+import heartEmptyUrl from "./assets/heart-empty.svg";
+import heartFilledUrl from "./assets/heart-filled.svg";
 import { Speaker } from "./audio.ts";
 import { kindFromLabel, padIcon } from "./icons.ts";
 import { startInstall } from "./install.ts";
@@ -65,6 +69,7 @@ import { startTour } from "./tour.ts";
 const pick = document.querySelector<HTMLElement>("#pick")!;
 const tabOnline = document.querySelector<HTMLButtonElement>("#tab-online")!;
 const tabLocal = document.querySelector<HTMLButtonElement>("#tab-local")!;
+const gameSearch = document.querySelector<HTMLInputElement>("#game-search")!;
 const stage = document.querySelector<HTMLElement>("#stage")!;
 const panel = document.querySelector<HTMLElement>("#panel")!;
 const roomOpen = document.querySelector<HTMLButtonElement>("#room-open")!;
@@ -196,6 +201,9 @@ let pingDirect = false;
 type ShelfTab = "online" | "local";
 
 let shelfTab: ShelfTab = "online";
+let favoriteOrder: string[] = [];
+const favoriteBusy = new Set<string>();
+let favoriteQueue: Promise<void> = Promise.resolve();
 let library: LibraryGame[] = [];
 const coverUrls = new Map<string, string>();
 let paintedShelf = "";
@@ -369,7 +377,21 @@ function plainGame(game: Game = selected): boolean {
 }
 
 function visibleShelf(): Game[] {
-  return shelfTab === "online" ? [...games] : [localGame, ...library];
+  let shelf = shelfTab === "online" ? [...games] : [localGame, ...library];
+  const query = gameSearch.value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (query) {
+    shelf = shelf.filter((game) => game.title.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(query));
+  }
+  if (shelfTab === "online" && favoriteOrder.length) {
+    const byId = new Map(shelf.map((game) => [game.id, game]));
+    const favorites = favoriteOrder.flatMap((id) => {
+      const game = byId.get(id);
+      return game ? [game] : [];
+    });
+    const favoriteIds = new Set(favorites.map((game) => game.id));
+    shelf = [...favorites, ...shelf.filter((game) => !favoriteIds.has(game.id))];
+  }
+  return shelf;
 }
 
 function findGame(id: string | null): Game | undefined {
@@ -500,8 +522,8 @@ function faceKey(game: Game): string {
 
 function renderGames() {
   const shelf = visibleShelf();
-  const key = shelf.map((game) => `${game.id}\t${game.title}\t${faceKey(game)}`).join("\n");
-  const buttons = pick.querySelectorAll<HTMLButtonElement>(":scope > .game, :scope > .game-item > .game");
+  const key = shelf.map((game) => `${game.id}\t${game.title}\t${faceKey(game)}\t${favoriteOrder.includes(game.id)}\t${favoriteBusy.has(game.id)}`).join("\n");
+  const buttons = pick.querySelectorAll<HTMLButtonElement>(":scope > .game, :scope > .game-card > .game, :scope > .game-item > .game");
   if (key === paintedShelf && buttons.length === shelf.length) {
     shelf.forEach((game, index) => {
       const button = buttons[index];
@@ -543,6 +565,32 @@ function renderGames() {
       button.scrollIntoView({ inline: "center", block: "nearest" });
       void openStored(game);
     });
+    if (!isLibraryGame(game) && !plainGame(game)) {
+      const card = document.createElement("div");
+      card.className = "game-card";
+      card.dataset.gameId = game.id;
+      const favorite = document.createElement("button");
+      const isFavorite = favoriteOrder.includes(game.id);
+      favorite.type = "button";
+      favorite.className = "game-favorite";
+      favorite.dataset.favorite = game.id;
+      favorite.disabled = favoriteBusy.has(game.id);
+      favorite.setAttribute("aria-pressed", isFavorite ? "true" : "false");
+      favorite.setAttribute("aria-label", isFavorite ? `Remover ${game.title} dos favoritos` : `Favoritar ${game.title}`);
+      favorite.title = isFavorite ? "Remover dos favoritos" : "Adicionar aos favoritos";
+      const heart = document.createElement("img");
+      heart.src = isFavorite ? heartFilledUrl : heartEmptyUrl;
+      heart.alt = "";
+      heart.draggable = false;
+      favorite.append(heart);
+      favorite.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void toggleFavorite(game);
+      });
+      card.append(button, favorite);
+      pick.append(card);
+      return;
+    }
     if (!isLibraryGame(game)) {
       pick.append(button);
       return;
@@ -559,6 +607,31 @@ function renderGames() {
     pick.append(item);
   });
   clipTitles();
+}
+
+async function toggleFavorite(game: Game) {
+  if (!account) {
+    setBanner("Entre na conta para salvar seus jogos favoritos.", "warn");
+    return;
+  }
+  if (favoriteBusy.has(game.id)) return;
+  const userId = account.id;
+  const nextState = !favoriteOrder.includes(game.id);
+  favoriteBusy.add(game.id);
+  renderGames();
+  const request = favoriteQueue.then(async () => {
+    const next = await setFavorite(game.id, nextState);
+    if (account?.id === userId) favoriteOrder = next;
+  });
+  favoriteQueue = request.then(() => undefined, () => undefined);
+  try {
+    await request;
+  } catch (error) {
+    setBanner(error instanceof Error ? error.message : "NÃ£o deu para atualizar os favoritos.", "error");
+  } finally {
+    favoriteBusy.delete(game.id);
+    renderGames();
+  }
 }
 
 function syncPlainRoom() {
@@ -2678,6 +2751,10 @@ function paintAccount() {
   } else {
     nickInput.value = nick;
     friendList.replaceChildren();
+    if (favoriteOrder.length) {
+      favoriteOrder = [];
+      renderGames();
+    }
   }
   peopleKey = "";
   renderPeople();
@@ -2687,12 +2764,24 @@ function paintAccount() {
 }
 
 async function refreshAccount() {
+  const previousId = account?.id;
   try {
     account = await fetchAccount();
   } catch {
     account = null;
   }
+  if (account?.id !== previousId) favoriteOrder = [];
   paintAccount();
+  if (account) {
+    const userId = account.id;
+    try {
+      const next = await loadFavorites();
+      if (account?.id === userId) favoriteOrder = next;
+    } catch (error) {
+      if (account?.id === userId) setBanner(error instanceof Error ? error.message : "NÃ£o deu para carregar os favoritos.", "error");
+    }
+  }
+  renderGames();
   const params = new URLSearchParams(location.search);
   if (params.get("login") === "falhou") {
     setBanner("Não deu para entrar. Tente de novo.", "error");
@@ -4121,6 +4210,7 @@ async function saveLibraryEdit() {
 
 tabOnline.addEventListener("click", () => showTab("online"));
 tabLocal.addEventListener("click", () => showTab("local"));
+gameSearch.addEventListener("input", () => renderGames());
 
 libraryFile.addEventListener("change", () => {
   const file = libraryFile.files?.[0];

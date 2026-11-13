@@ -43,3 +43,8 @@ CREATE TABLE IF NOT EXISTS room_invites (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS room_invites_to ON room_invites (to_id);
+CREATE TABLE IF NOT EXISTS favorites (
+  user_id TEXT NOT NULL,
+  game_id TEXT NOT NULL,
+  PRIMARY KEY (user_id, game_id)
+);

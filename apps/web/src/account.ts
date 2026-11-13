@@ -161,6 +161,20 @@ export async function loadFriends(): Promise<FriendLists> {
   return { friends: take(body.friends), incoming: take(body.incoming), outgoing: take(body.outgoing) };
 }
 
+export async function loadFavorites(): Promise<string[]> {
+  const response = await fetch("/api/favorites");
+  if (!response.ok) await fail(response);
+  const body = await response.json() as { favorites?: unknown[] };
+  return (body.favorites ?? []).filter((id): id is string => typeof id === "string");
+}
+
+export async function setFavorite(gameId: string, favorite: boolean): Promise<string[]> {
+  const response = await fetch(`/api/favorites/${encodeURIComponent(gameId)}`, { method: favorite ? "PUT" : "DELETE" });
+  if (!response.ok) await fail(response);
+  const body = await response.json() as { favorites?: unknown[] };
+  return (body.favorites ?? []).filter((id): id is string => typeof id === "string");
+}
+
 export async function askFriend(code: string): Promise<"pending" | "accepted"> {
   const response = await fetch("/api/friends", {
     method: "POST",

@@ -1,5 +1,6 @@
 import { beginLogin, clearSessionCookie, finishLogin, type Provider } from "./auth";
 import { proxyAvatar } from "./avatar";
+import { changeFavorite, listFavorites } from "./favorites";
 import type { Env } from "./env";
 import {
   acceptFriend,
@@ -51,6 +52,7 @@ export async function routeAccount(request: Request, env: Env): Promise<Response
   if (path === "/api/health" || path === "/api/ice" || path === "/api/coffee" || path.startsWith("/api/rooms/")) return null;
   const account = path.startsWith("/api/auth")
     || path.startsWith("/api/saves")
+    || path.startsWith("/api/favorites")
     || path.startsWith("/api/friends")
     || path.startsWith("/api/invites")
     || path.startsWith("/api/avatars/")
@@ -122,6 +124,19 @@ export async function routeAccount(request: Request, env: Env): Promise<Response
     const user = await requireUser(request, env);
     if (user instanceof Response) return user;
     return listSaves(request, env, user);
+  }
+
+  if (path === "/api/favorites" && request.method === "GET") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    return listFavorites(env, user);
+  }
+
+  const favorite = path.match(/^\/api\/favorites\/([a-z0-9-]+)$/);
+  if (favorite && (request.method === "PUT" || request.method === "DELETE")) {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    return changeFavorite(env, user, favorite[1], request.method === "PUT");
   }
 
   const save = path.match(/^\/api\/saves\/([a-z0-9-]+)\/([123])(\/shot)?$/);

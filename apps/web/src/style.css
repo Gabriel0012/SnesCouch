@@ -251,6 +251,15 @@ header .lede { color: var(--header-dim); margin: 0; }
 
 #shelf, #panel, #stage { min-height: 0; }
 #shelf { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.game-search { flex: none; padding: 0.85rem 0.85rem 0; }
+.game-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.55rem 0.65rem;
+  background: var(--page);
+  color: var(--paper);
+  box-shadow: inset 0 0 0 2px var(--edge), 2px 2px 0 #000;
+}
 .game-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -275,6 +284,32 @@ header .lede { color: var(--header-dim); margin: 0; }
   overflow-wrap: anywhere;
 }
 .game-item { position: relative; min-width: 0; }
+.game-card {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+.game-favorite {
+  position: absolute;
+  z-index: 2;
+  top: auto;
+  bottom: 0.45rem;
+  right: 0.45rem;
+  display: grid;
+  place-items: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0.2rem;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  box-shadow: none;
+}
+.game-favorite img { width: 0.95rem; height: 0.95rem; image-rendering: pixelated; }
+.game-favorite:hover, .game-favorite:active, .game-favorite.on { background: transparent; box-shadow: none; }
+.game-favorite:active { transform: none; }
+.game-favorite:disabled { opacity: 0.65; cursor: wait; }
+.game-card .game { min-width: 0; }
 .game-edit {
   position: absolute;
   z-index: 1;
@@ -2744,6 +2779,7 @@ footer.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; ani
     border-bottom: 4px solid #000;
     overflow: visible;
   }
+  .game-search { padding: 0.45rem 0.75rem 0; }
   .game-tabs { padding: 0.35rem 0.75rem 0; }
   #pick {
     display: flex;
@@ -2768,6 +2804,13 @@ footer.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; ani
     width: 7.6rem;
     scroll-snap-align: start;
   }
+  .game-card {
+    flex: 0 0 7.6rem;
+    width: 7.6rem;
+    scroll-snap-align: start;
+  }
+  .game-favorite { bottom: 0.35rem; right: 0.35rem; width: 1.7rem; height: 1.7rem; padding: 0.15rem; }
+  .game-favorite img { width: 0.95rem; height: 0.95rem; }
   .game {
     display: flex;
     flex-direction: column;
@@ -2816,6 +2859,9 @@ footer.arrive { animation: in-down calc(var(--tick) * 5) steps(5, end) both; ani
     flex-basis: 5.4rem;
     width: 5.4rem;
   }
+  .game-card { flex-basis: 5.4rem; width: 5.4rem; }
+  .game-favorite { bottom: 0.25rem; right: 0.25rem; width: 1.4rem; height: 1.4rem; padding: 0.1rem; }
+  .game-favorite img { width: 0.8rem; height: 0.8rem; }
   .game {
     padding: 0.25rem;
     gap: 0.2rem;
